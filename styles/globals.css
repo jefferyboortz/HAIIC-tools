@@ -1,0 +1,29 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  background: #0b0c0e;
+  color: #e2e2e2;
+  font-family: 'DM Sans', sans-serif;
+}
+
+a:hover {
+  color: #ee4523 !important;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+::selection {
+  background: #ee4523;
+  color: #fff;
+}
+
+textarea:focus, input:focus {
+  border-color: #ee4523 !important;
+}
