@@ -22,7 +22,7 @@ export default function Layout({ children, title, logoSrc }) {
             ) : (
               <>
                 <img src="/favicon.png" alt="HAIC" style={styles.logoIcon} />
-                <span style={styles.logoText}>HAIC Tools</span>
+                <span style={styles.logoText}>HAIIC Tools</span>
               </>
             )}
           </Link>
