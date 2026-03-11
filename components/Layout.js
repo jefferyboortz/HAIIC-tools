@@ -68,7 +68,7 @@ const styles = {
   logoImg: { height: 36 },
   logoIcon: { height: 32, width: 32, borderRadius: 6 },
   logoText: {
-    fontFamily: "'Playfair Display', serif",
+    fontFamily: "'DM Sans', sans-serif",
     fontSize: 22,
     fontWeight: 700,
     color: theme.text,
