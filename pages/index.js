@@ -5,21 +5,29 @@ import theme from "../components/theme";
 export default function Home() {
   return (
     <Layout title="HAIC Tools">
+
+      {/* Storage warning banner */}
+      <div style={styles.storageBanner}>
+        💾 <strong>Save tip:</strong> Your projects are saved to this browser only. Export your .docx regularly as a backup — and avoid clearing your browser history mid-session.
+      </div>
+
       <div style={styles.hero}>
         <p style={styles.tagline}>Human-AI Innovation Commons</p>
         <h1 style={styles.heroTitle}>Democratizing the Patent System</h1>
         <p style={styles.heroDesc}>
           Two AI-powered tools that transform patent filing from a $10,000–$15,000 professional
-          service into a guided conversation anyone can use. Every patent enters our irrevocable
-          three-way benefit-sharing framework.
+          service into a guided conversation anyone can use.
         </p>
       </div>
 
       <div style={styles.pipeline}>
         <p style={styles.pipelineLabel}>THE INVENTOR PIPELINE</p>
         <div style={styles.cards}>
+
           <Link href="/brainstorm" style={styles.card}>
-            <div style={styles.cardIcon}>💡</div>
+            <div style={styles.cardHeader}>
+              <img src="/brainstorm-logo.png" alt="Brainstorm" style={styles.cardLogo} />
+            </div>
             <h2 style={styles.cardTitle}>Brainstorm</h2>
             <p style={styles.cardDesc}>
               An AI coach that helps you identify patentable innovations hiding in your existing
@@ -27,72 +35,82 @@ export default function Home() {
               commercial value.
             </p>
             <div style={styles.cardPhases}>
-              <span style={styles.phase}>Your Expertise</span>
-              <span style={styles.arrow}>→</span>
-              <span style={styles.phase}>Define Problem</span>
-              <span style={styles.arrow}>→</span>
-              <span style={styles.phase}>Explore</span>
-              <span style={styles.arrow}>→</span>
-              <span style={styles.phase}>Brainstorm</span>
-              <span style={styles.arrow}>→</span>
-              <span style={styles.phase}>Refine</span>
-              <span style={styles.arrow}>→</span>
-              <span style={styles.phase}>Invention Brief</span>
+              {["Your Expertise","Define Problem","Explore","Brainstorm","Refine","Invention Brief"].map((p, i, arr) => (
+                <span key={p} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={styles.phase}>{p}</span>
+                  {i < arr.length - 1 && <span style={styles.arrow}>→</span>}
+                </span>
+              ))}
             </div>
             <div style={styles.cardCta}>Start Brainstorming →</div>
           </Link>
 
           <Link href="/patent-forge" style={styles.card}>
-            <div style={styles.cardIcon}>⚒️</div>
+            <div style={styles.cardHeader}>
+              <img src="/patentforge-logo.png" alt="Patent Forge" style={styles.cardLogo} />
+            </div>
             <h2 style={styles.cardTitle}>Patent Forge</h2>
             <p style={styles.cardDesc}>
               Walks you through every section of a provisional patent application with real-time AI
               guidance on claims drafting, prior art, and technical specifications.
             </p>
             <div style={styles.cardPhases}>
-              <span style={styles.phase}>Inventor Info</span>
-              <span style={styles.arrow}>→</span>
-              <span style={styles.phase}>Benefit-Sharing Agreement</span>
-              <span style={styles.arrow}>→</span>
-              <span style={styles.phase}>Title & Field</span>
-              <span style={styles.arrow}>→</span>
-              <span style={styles.phase}>Description</span>
-              <span style={styles.arrow}>→</span>
-              <span style={styles.phase}>Claims</span>
-              <span style={styles.arrow}>→</span>
-              <span style={styles.phase}>Filing Package</span>
+              {["Inventor Info","Our Vision","Title & Field","Description","Claims","Filing Package"].map((p, i, arr) => (
+                <span key={p} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={styles.phase}>{p}</span>
+                  {i < arr.length - 1 && <span style={styles.arrow}>→</span>}
+                </span>
+              ))}
             </div>
             <div style={styles.cardCta}>Start Your Patent →</div>
           </Link>
+
         </div>
       </div>
 
       <div style={styles.framework}>
-        <p style={styles.pipelineLabel}>BENEFIT-SHARING FRAMEWORK</p>
-        <h2 style={styles.frameworkTitle}>Every patent. Three-way split. Irrevocable.</h2>
+        <p style={styles.pipelineLabel}>OUR SHARED VISION</p>
+        <h2 style={styles.frameworkTitle}>Built for inventors, not corporations.</h2>
+        <p style={styles.frameworkDesc}>
+          We're not asking you to sign a contract — we're inviting you into a vision.
+          When AI helps create something valuable, we believe the wealth should flow back
+          to the people AI affects most. Here's the model we live by:
+        </p>
         <div style={styles.splits}>
           <div style={styles.split}>
             <div style={styles.splitPct}>⅓</div>
-            <div style={styles.splitLabel}>Human Inventor</div>
-            <p style={styles.splitDesc}>The person whose expertise created the innovation</p>
+            <div style={styles.splitLabel}>The Inventor</div>
+            <p style={styles.splitDesc}>You brought the expertise and lived experience. That deserves to be rewarded.</p>
           </div>
           <div style={styles.split}>
             <div style={styles.splitPct}>⅓</div>
             <div style={styles.splitLabel}>Displaced Workers</div>
-            <p style={styles.splitDesc}>Programs supporting workers affected by AI automation</p>
+            <p style={styles.splitDesc}>AI is reshaping the workforce. Those most affected deserve a share of what it creates.</p>
           </div>
           <div style={styles.split}>
             <div style={styles.splitPct}>⅓</div>
             <div style={styles.splitLabel}>AI Safety Research</div>
-            <p style={styles.splitDesc}>Ensuring AI development benefits everyone</p>
+            <p style={styles.splitDesc}>So that AI keeps working for everyone — not just those who own it.</p>
           </div>
         </div>
+        <p style={styles.compass}>This is our compass, not a clause.</p>
       </div>
+
     </Layout>
   );
 }
 
 const styles = {
+  storageBanner: {
+    background: theme.surfaceAlt,
+    border: `1px solid ${theme.border}`,
+    borderRadius: 8,
+    padding: "10px 16px",
+    fontSize: 13,
+    color: theme.textMuted,
+    lineHeight: 1.5,
+    marginBottom: 32,
+  },
   hero: { textAlign: "center", marginBottom: 60 },
   tagline: {
     color: theme.red,
@@ -136,7 +154,8 @@ const styles = {
     transition: "border-color 0.2s",
     cursor: "pointer",
   },
-  cardIcon: { fontSize: 32, marginBottom: 12 },
+  cardHeader: { marginBottom: 16 },
+  cardLogo: { height: 40, width: "auto", display: "block" },
   cardTitle: {
     fontFamily: "'Playfair Display', serif",
     fontSize: 26,
@@ -149,7 +168,7 @@ const styles = {
     display: "flex",
     flexWrap: "wrap",
     alignItems: "center",
-    gap: 6,
+    gap: 4,
     marginBottom: 20,
   },
   phase: {
@@ -168,17 +187,32 @@ const styles = {
     border: `1px solid ${theme.border}`,
     borderRadius: 12,
     padding: 32,
+    marginBottom: 40,
   },
   frameworkTitle: {
     fontFamily: "'Playfair Display', serif",
     fontSize: 24,
     fontWeight: 700,
     color: theme.text,
-    marginBottom: 24,
+    marginBottom: 12,
   },
-  splits: { display: "flex", gap: 24 },
-  split: { flex: 1, textAlign: "center" },
+  frameworkDesc: {
+    fontSize: 14,
+    lineHeight: 1.7,
+    color: theme.textMuted,
+    marginBottom: 24,
+    maxWidth: 600,
+  },
+  splits: { display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 20 },
+  split: { flex: 1, textAlign: "center", minWidth: 140 },
   splitPct: { fontSize: 36, fontWeight: 700, color: theme.red, marginBottom: 8 },
   splitLabel: { fontSize: 14, fontWeight: 700, color: theme.text, marginBottom: 6 },
   splitDesc: { fontSize: 13, color: theme.textMuted, lineHeight: 1.5 },
+  compass: {
+    fontSize: 13,
+    color: theme.textDim,
+    fontStyle: "italic",
+    textAlign: "center",
+    marginTop: 8,
+  },
 };
