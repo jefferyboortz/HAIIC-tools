@@ -10,6 +10,11 @@ const supabase = createClient(
 
 export default function LoginPage() {
   const router = useRouter();
+  const next = router.query.next || "/";
+  const isForge = next.includes("patent-forge");
+  const logoSrc = isForge ? "/patentforge-logo.png" : "/brainstorm-logo.png";
+  const toolName = isForge ? "Patent Forge" : "Brainstorm";
+
   const [mode,     setMode]     = useState("login");
   const [email,    setEmail]    = useState("");
   const [password, setPassword] = useState("");
@@ -46,8 +51,8 @@ export default function LoginPage() {
     <div style={s.page}>
       <div style={s.card}>
         <div style={s.header}>
-          <img src="/brainstorm-logo.png" alt="HAIIC" style={s.logo} />
-          <h1 style={s.title}>HAIIC Tools</h1>
+          <img src={logoSrc} alt={toolName} style={s.logo} />
+          <h1 style={s.title}>{toolName}</h1>
           <p style={s.subtitle}>Your invention sessions, saved securely across any device.</p>
         </div>
 
