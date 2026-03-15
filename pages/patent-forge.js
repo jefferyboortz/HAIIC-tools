@@ -8,7 +8,7 @@ import theme from "../components/theme";
 
 const SECTIONS = [
   { id: "inventor",     label: "Inventor Info",             icon: "①" },
-  { id: "agreement",    label: "Benefit-Sharing",           icon: "②" },
+  { id: "agreement",    label: "Our Vision",                icon: "②" },
   { id: "title",        label: "Title & Field",             icon: "③" },
   { id: "description",  label: "Description",               icon: "④" },
   { id: "claims",       label: "Claims",                    icon: "⑤" },
@@ -432,43 +432,53 @@ function AgreementSection({ data, setData, onNext }) {
 
   return (
     <div style={ps.content}>
-      <h2 style={ps.title}>HAIIC Benefit-Sharing Agreement</h2>
+      <h2 style={ps.title}>Our Shared Vision</h2>
       <p style={ps.desc}>
-        Every patent created through HAIIC's tools enters our irrevocable three-way benefit-sharing
-        framework. Please review and acknowledge the terms below.
+        Before we go further, we want to share what HAIIC is about — and what we hope
+        this tool means for you and for the world.
       </p>
 
       <div style={ps.agreementCard}>
-        <h3 style={ps.agreementTitle}>Benefit-Sharing Framework</h3>
+        <h3 style={ps.agreementTitle}>Why We Built This</h3>
         <p style={ps.agreementText}>
-          Upon issuance of any non-provisional patent derived from this application,
-          commercialization rights shall be administered under the HAIIC Benefit-Sharing Framework:
+          AI is changing everything — including who gets to benefit from innovation.
+          HAIIC exists because we believe that breakthrough ideas don't belong only to corporations
+          and venture capital. They belong to people like you: teachers, tradespeople, healthcare
+          workers, farmers, and anyone else who has spent years solving real problems in the real world.
+        </p>
+        <p style={ps.agreementText}>
+          Patent Forge is free because we believe democratizing invention is the right thing to do.
+          No fine print. No hidden fees. No claiming ownership of your idea.
+        </p>
+
+        <h3 style={{ ...ps.agreementTitle, marginTop: 20 }}>What We Hope For</h3>
+        <p style={ps.agreementText}>
+          We're not asking you to sign a contract. We're inviting you into a vision.
+          HAIIC was founded on the belief that when AI helps create something valuable,
+          the wealth it generates should flow back to the people AI affects most.
+          Here's the model we live by — and that we hope inspires you:
         </p>
         <div style={ps.splits}>
           <div style={ps.split}>
             <div style={ps.splitPct}>33⅓%</div>
-            <div style={ps.splitLabel}>To the Inventor</div>
-            <p style={ps.splitDesc}>You, {data.inventorName || "the inventor"}, retain one-third of all licensing revenue</p>
+            <div style={ps.splitLabel}>The Inventor</div>
+            <p style={ps.splitDesc}>You brought the expertise, the insight, and the lived experience. That deserves to be rewarded.</p>
           </div>
           <div style={ps.split}>
             <div style={ps.splitPct}>33⅓%</div>
             <div style={ps.splitLabel}>Displaced Workers</div>
-            <p style={ps.splitDesc}>Programs supporting workers affected by AI automation</p>
+            <p style={ps.splitDesc}>AI is reshaping the workforce. We believe those most affected deserve a share of what it creates.</p>
           </div>
           <div style={ps.split}>
             <div style={ps.splitPct}>33⅓%</div>
             <div style={ps.splitLabel}>AI Safety Research</div>
-            <p style={ps.splitDesc}>Research ensuring AI development benefits everyone</p>
+            <p style={ps.splitDesc}>So that AI keeps working for everyone — not just those who own it.</p>
           </div>
         </div>
-        <p style={ps.agreementText}>
-          This framework is embedded in HAIIC's founding documents with structural protections
-          that prevent any future board from modifying or dissolving it.
-        </p>
         <p style={ps.agreementNote}>
-          Note: This acknowledgment documents your intent to participate in the HAIIC Benefit-Sharing
-          Framework. Formal assignment will be executed upon patent issuance with the assistance of
-          legal counsel.
+          This is our compass, not a clause. You're not obligated to follow this model —
+          your invention is yours. But if it succeeds, we hope you'll remember where the idea
+          started, and consider paying it forward.
         </p>
       </div>
 
@@ -479,9 +489,8 @@ function AgreementSection({ data, setData, onNext }) {
           onChange={e => { setAgreed(e.target.checked); setData({ ...data, agreed: e.target.checked }); }}
           style={ps.checkbox}
         />
-        I, {data.inventorName || "[inventor name]"}, acknowledge the HAIIC Benefit-Sharing Framework
-        and agree that upon issuance of any non-provisional patent derived from this application,
-        commercialization rights shall be administered under this framework.
+        I've read HAIIC's vision and I'm ready to move forward. I understand this is not a
+        legal obligation — it's an invitation to be part of something better.
       </label>
 
       <button
@@ -489,7 +498,7 @@ function AgreementSection({ data, setData, onNext }) {
         disabled={!agreed}
         style={{ ...ps.nextBtn, opacity: agreed ? 1 : 0.4, cursor: agreed ? "pointer" : "not-allowed" }}
       >
-        I Agree — Next: Title & Field →
+        I'm In — Next: Title & Field →
       </button>
     </div>
   );
