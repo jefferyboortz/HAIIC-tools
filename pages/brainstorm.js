@@ -1,10 +1,15 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/router";
+import { createClient } from "@supabase/supabase-js";
 import Layout from "../components/Layout";
 import ChatThread from "../components/ChatThread";
 import useChat from "../components/useChat";
 import theme from "../components/theme";
-import { supabase } from "../lib/supabase";
+
+const supabase = createClient(
+  "https://quruzppflgdbddxyylxu.supabase.co",
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cnV6cHBmbGdkYmRkeHl5bHh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2MDQ1NTEsImV4cCI6MjA4OTE4MDU1MX0.y6acgCo6EZZiEDIJHSx6J3T60L1P6M_DH3vTIulFvJ0"
+);
 
 const PHASES = [
   { id: "welcome",  label: "Welcome",         icon: "💡" },
@@ -34,10 +39,10 @@ async function exportToDocx(project) {
     return raw.split("\n").flatMap((line) => {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith("[SYSTEM:")) return [];
-      const isAssistant = trimmed.startsWith("assistant:"), isUser = trimmed.startsWith("user:");
-      const roleLabel = isAssistant ? "AI Coach" : isUser ? "You" : null;
-      const body = roleLabel ? trimmed.slice(trimmed.indexOf(":") + 1).trim() : trimmed;
-      return [new Paragraph({ spacing: { after: 60 }, children: [...(roleLabel ? [new TextRun({ text: `${roleLabel}:  `, bold: true, color: isAssistant ? RED : BLACK, font: "Arial", size: 20 })] : []), new TextRun({ text: body, font: "Arial", size: 20, color: GRAY })] })];
+      const isA = trimmed.startsWith("assistant:"), isU = trimmed.startsWith("user:");
+      const role = isA ? "AI Coach" : isU ? "You" : null;
+      const body = role ? trimmed.slice(trimmed.indexOf(":") + 1).trim() : trimmed;
+      return [new Paragraph({ spacing: { after: 60 }, children: [...(role ? [new TextRun({ text: `${role}:  `, bold: true, color: isA ? RED : BLACK, font: "Arial", size: 20 })] : []), new TextRun({ text: body, font: "Arial", size: 20, color: GRAY })] })];
     });
   };
   const children = [];
@@ -57,8 +62,8 @@ async function exportToDocx(project) {
     if (!data[key]) return;
     children.push(sectionHeading(label), spacer(), ...renderDiscussion(data[key]), spacer());
   });
-  if (data.noveltyAssessment) children.push(sectionHeading("Novelty & Patentability Assessment"), spacer(), ...data.noveltyAssessment.split("\n").map(line => new Paragraph({ spacing: { after: line.trim() === "" ? 100 : 60 }, children: [new TextRun({ text: line, font: "Arial", size: 20, color: GRAY })] })), spacer());
-  if (data.inventionBrief) children.push(new Paragraph({ children: [new TextRun("")], pageBreakBefore: true }), sectionHeading("Invention Brief"), spacer(), ...data.inventionBrief.split("\n").map(line => new Paragraph({ spacing: { after: line.trim() === "" ? 120 : 60 }, children: [new TextRun({ text: line, font: "Arial", size: 20, color: line.startsWith(" ") || line.trim() === "" ? GRAY : BLACK, bold: /^[A-Z][A-Z\s]{3,}$/.test(line.trim()) })] })));
+  if (data.noveltyAssessment) children.push(sectionHeading("Novelty & Patentability Assessment"), spacer(), ...data.noveltyAssessment.split("\n").map(line => new Paragraph({ spacing: { after: 60 }, children: [new TextRun({ text: line, font: "Arial", size: 20, color: GRAY })] })), spacer());
+  if (data.inventionBrief) children.push(new Paragraph({ children: [new TextRun("")], pageBreakBefore: true }), sectionHeading("Invention Brief"), spacer(), ...data.inventionBrief.split("\n").map(line => new Paragraph({ spacing: { after: line.trim() === "" ? 120 : 60 }, children: [new TextRun({ text: line, font: "Arial", size: 20, color: GRAY })] })));
   const doc = new Document({
     styles: { default: { document: { run: { font: "Arial", size: 22 } } }, paragraphStyles: [{ id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 40, bold: true, font: "Arial", color: BLACK }, paragraph: { spacing: { before: 0, after: 160 }, outlineLevel: 0 } }, { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 26, bold: true, font: "Arial", color: RED }, paragraph: { spacing: { before: 320, after: 120 }, outlineLevel: 1 } }] },
     sections: [{ properties: { page: { size: { width: 12240, height: 15840 }, margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } } }, headers: { default: new Header({ children: [new Paragraph({ tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }], border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: RED, space: 4 } }, children: [new TextRun({ text: "HAIIC Brainstorm", font: "Arial", size: 18, color: RED, bold: true }), new TextRun({ text: "\tapps-haiic.com", font: "Arial", size: 18, color: GRAY })] })] }) }, footers: { default: new Footer({ children: [new Paragraph({ tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }], children: [new TextRun({ text: "Human-AI Innovation Commons  ·  Co-authored with Claude", font: "Arial", size: 16, color: GRAY }), new TextRun({ children: ["\t", PageNumber.CURRENT], font: "Arial", size: 16, color: GRAY })] })] }) }, children }],
@@ -75,51 +80,35 @@ function NoveltyAdvisor({ data, context, onSave }) {
   const [followUp, setFollowUp] = useState("");
   const [thread, setThread] = useState(data.noveltyThread || []);
 
-  const systemPrompt = `You are a knowledgeable friend who has been through the patent process. Give inventors an honest, plain-English read on novelty and patentability — and concrete suggestions to strengthen it. Tone: honest but encouraging. The first idea is rarely the best.
-
-Structure every response with these exact headers:
-
-🔍 THE HONEST READ
-One paragraph on what's interesting and the main novelty challenge.
-
-✅ WHAT'S WORKING
-2-3 specific strengths. Be concrete.
-
-⚠️ WATCH OUT FOR
-1-2 prior art concerns in plain English.
-
-💡 HOW TO STRENGTHEN IT
-2-3 actionable suggestions — exactly what to add or change.
-
-End with: "Remember: the first idea is rarely the best — every refinement gets you closer. This is a starting point, not a verdict. A registered patent attorney can run a full prior art search before you file."`;
+  const systemPrompt = `You are a knowledgeable friend who has been through the patent process. Give inventors an honest, plain-English read on novelty and patentability — and concrete suggestions to strengthen it. Tone: honest but encouraging. The first idea is rarely the best.\n\nStructure every response with these exact headers:\n\n🔍 THE HONEST READ\nOne paragraph.\n\n✅ WHAT'S WORKING\n2-3 specific strengths.\n\n⚠️ WATCH OUT FOR\n1-2 prior art concerns in plain English.\n\n💡 HOW TO STRENGTHEN IT\n2-3 actionable suggestions.\n\nEnd with: "Remember: the first idea is rarely the best — every refinement gets you closer. This is a starting point, not a verdict. A registered patent attorney can run a full prior art search before you file."`;
 
   const runAssessment = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ system: systemPrompt, messages: [{ role: "user", content: `Assess the novelty and patentability of this invention:\n\n${context}` }], max_tokens: 900 }) });
+      const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ system: systemPrompt, messages: [{ role: "user", content: `Assess novelty and patentability:\n\n${context}` }], max_tokens: 900 }) });
       const result = await res.json();
-      const text = result.content?.map(i => i.type === "text" ? i.text : "").join("\n") || "Unable to generate assessment.";
-      setAssessment(text); const newThread = [{ role: "assistant", content: text }]; setThread(newThread);
-      onSave({ noveltyAssessment: text, noveltyThread: newThread });
+      const text = result.content?.map(i => i.type === "text" ? i.text : "").join("\n") || "Unable to generate.";
+      setAssessment(text); const nt = [{ role: "assistant", content: text }]; setThread(nt);
+      onSave({ noveltyAssessment: text, noveltyThread: nt });
     } catch { setAssessment("Unable to generate assessment. Please try again."); } finally { setLoading(false); }
   };
 
   const askFollowUp = async () => {
     if (!followUp.trim() || loading) return;
-    const userMsg = { role: "user", content: followUp }; const newThread = [...thread, userMsg];
-    setThread(newThread); setFollowUp(""); setLoading(true);
+    const um = { role: "user", content: followUp }; const nt = [...thread, um];
+    setThread(nt); setFollowUp(""); setLoading(true);
     try {
-      const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ system: systemPrompt, messages: [{ role: "user", content: `Context:\n\n${context}` }, ...newThread], max_tokens: 600 }) });
+      const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ system: systemPrompt, messages: [{ role: "user", content: `Context:\n\n${context}` }, ...nt], max_tokens: 600 }) });
       const result = await res.json();
       const text = result.content?.map(i => i.type === "text" ? i.text : "").join("\n") || "Unable to respond.";
-      const updated = [...newThread, { role: "assistant", content: text }]; setThread(updated);
+      const updated = [...nt, { role: "assistant", content: text }]; setThread(updated);
       onSave({ noveltyAssessment: assessment, noveltyThread: updated });
     } catch {} finally { setLoading(false); }
   };
 
   return (
     <div style={na.wrap}>
-      <button onClick={() => setOpen(o => !o)} style={na.toggle}>🔬 Novelty Advisor &nbsp;{open ? "▲" : "▼"}{assessment && <span style={na.badge}>✓ Assessment ready</span>}</button>
+      <button onClick={() => setOpen(o => !o)} style={na.toggle}>🔬 Novelty Advisor &nbsp;{open ? "▲" : "▼"}{assessment && <span style={na.badge}>✓ Ready</span>}</button>
       {open && (
         <div style={na.panel}>
           <p style={na.intro}>Get an honest read on how patentable your invention is — and exactly what to do to make it stronger.</p>
@@ -139,25 +128,6 @@ End with: "Remember: the first idea is rarely the best — every refinement gets
   );
 }
 
-// ─── Session Toolbar ──────────────────────────────────────────────────────────
-
-function SessionToolbar({ project, onSave, onExport, onDashboard, onSignOut, userEmail }) {
-  const [saved, setSaved] = useState(false);
-  const handleSave = () => { onSave(); setSaved(true); setTimeout(() => setSaved(false), 2000); };
-  return (
-    <div style={tb.bar}>
-      <button onClick={onDashboard} style={tb.dashBtn}>← Projects</button>
-      <div style={tb.projectName}>{project.name}</div>
-      <div style={tb.actions}>
-        <button onClick={handleSave} style={{ ...tb.btn, color: saved ? "#4ade80" : theme.textMuted }}>{saved ? "✓ Saved" : "💾 Save Draft"}</button>
-        <button onClick={onExport} style={tb.btn}>⬇ Export .docx</button>
-        <span style={tb.userEmail}>{userEmail}</span>
-        <button onClick={onSignOut} style={tb.signOutBtn}>Sign Out</button>
-      </div>
-    </div>
-  );
-}
-
 // ─── Project Dashboard ────────────────────────────────────────────────────────
 
 function ProjectDashboard({ onNew, onResume, onSignOut, userEmail }) {
@@ -170,8 +140,7 @@ function ProjectDashboard({ onNew, onResume, onSignOut, userEmail }) {
   const fetchProjects = async () => {
     setLoading(true);
     const { data } = await supabase.from(TABLE).select("*").order("updated_at", { ascending: false });
-    setProjects(data || []);
-    setLoading(false);
+    setProjects(data || []); setLoading(false);
   };
 
   const handleNew = async () => {
@@ -179,8 +148,7 @@ function ProjectDashboard({ onNew, onResume, onSignOut, userEmail }) {
     const { data: { user } } = await supabase.auth.getUser();
     const project = { id: genId(), user_id: user.id, name, phase: 0, data: {} };
     await supabase.from(TABLE).insert(project);
-    setNewName("");
-    onNew(project);
+    setNewName(""); onNew(project);
   };
 
   const handleDelete = async (id, name) => {
@@ -201,10 +169,7 @@ function ProjectDashboard({ onNew, onResume, onSignOut, userEmail }) {
     <div style={ps.content}>
       <div style={db.topRow}>
         <h2 style={ps.title}>Your Brainstorm Projects</h2>
-        <div style={db.userRow}>
-          <span style={db.userEmail}>{userEmail}</span>
-          <button onClick={onSignOut} style={db.signOutBtn}>Sign Out</button>
-        </div>
+        <div style={db.userRow}><span style={db.userEmail}>{userEmail}</span><button onClick={onSignOut} style={db.signOutBtn}>Sign Out</button></div>
       </div>
       <p style={ps.desc}>Each project saves automatically — resume from any device, any time.</p>
       <div style={db.newRow}>
@@ -276,7 +241,7 @@ function ProblemPhase({ data, setData, onNext }) {
   return (
     <div style={ps.content}>
       <h2 style={ps.title}>Define the Problem</h2>
-      <p style={ps.desc}>Let's identify what's broken, slow, or frustrating in your field. The best inventions start with real problems.</p>
+      <p style={ps.desc}>Let's identify what's broken, slow, or frustrating in your field.</p>
       <ChatThread messages={chat.messages.filter((m, i) => !(i === 0 && m.role === "user" && m.content.startsWith("[SYSTEM:")))} loading={chat.loading} onSend={msg => chat.send(msg)} placeholder="Describe what frustrates you most..." />
       {chat.messages.length > 3 && <button onClick={proceed} style={ps.nextBtn}>Next: Explore Deeper →</button>}
     </div>
@@ -284,9 +249,9 @@ function ProblemPhase({ data, setData, onNext }) {
 }
 
 function DeepenPhase({ data, setData, onNext }) {
-  const chat = useChat(`You are an innovation coach at HAIIC helping someone explore a problem deeply.\nField: ${data.field}\nRole: ${data.role}\nProblem: ${(data.problemDiscussion || "").substring(0, 1500)}\nAsk about root causes, failed solutions, ripple effects, hidden assumptions. Summarize the key insight that could lead to a novel solution. Keep responses to 2-3 paragraphs.`);
+  const chat = useChat(`You are an innovation coach at HAIIC helping someone explore a problem deeply.\nField: ${data.field}\nRole: ${data.role}\nProblem: ${(data.problemDiscussion || "").substring(0, 1500)}\nAsk about root causes, failed solutions, ripple effects, hidden assumptions. Keep responses to 2-3 paragraphs.`);
   const initialized = useRef(false);
-  useEffect(() => { if (!initialized.current && chat.messages.length === 0) { initialized.current = true; chat.send("[SYSTEM: Reference the problem identified and probe deeper — root causes, failed solutions.]"); } }, []);
+  useEffect(() => { if (!initialized.current && chat.messages.length === 0) { initialized.current = true; chat.send("[SYSTEM: Reference the problem and probe deeper — root causes, failed solutions.]"); } }, []);
   const proceed = () => { setData({ ...data, deepenDiscussion: chat.messages.map(m => `${m.role}: ${m.content}`).join("\n") }); onNext(); };
   return (
     <div style={ps.content}>
@@ -299,30 +264,30 @@ function DeepenPhase({ data, setData, onNext }) {
 }
 
 function IdeatePhase({ data, setData, onNext }) {
-  const chat = useChat(`You are an innovation coach at HAIIC helping someone brainstorm solutions.\nField: ${data.field}\nRole: ${data.role}\nProblem: ${(data.problemDiscussion || "").substring(0, 1000)}\nExploration: ${(data.deepenDiscussion || "").substring(0, 1000)}\nPropose 3-4 diverse ideas: practical improvement, ambitious reimagining, cross-industry inspiration, moonshot. Help identify the 2-3 strongest. Keep energy high!`);
+  const chat = useChat(`You are an innovation coach at HAIIC helping someone brainstorm solutions.\nField: ${data.field}\nRole: ${data.role}\nProblem: ${(data.problemDiscussion || "").substring(0, 1000)}\nExploration: ${(data.deepenDiscussion || "").substring(0, 1000)}\nPropose 3-4 diverse ideas: practical, ambitious, cross-industry, moonshot. Help identify the 2-3 strongest.`);
   const initialized = useRef(false);
-  useEffect(() => { if (!initialized.current && chat.messages.length === 0) { initialized.current = true; chat.send("[SYSTEM: Summarize the problem in one sentence, then propose 3-4 diverse solution ideas. Ask which ones resonate.]"); } }, []);
+  useEffect(() => { if (!initialized.current && chat.messages.length === 0) { initialized.current = true; chat.send("[SYSTEM: Summarize the problem, then propose 3-4 diverse solution ideas. Ask which resonate.]"); } }, []);
   const proceed = () => { setData({ ...data, ideationDiscussion: chat.messages.map(m => `${m.role}: ${m.content}`).join("\n") }); onNext(); };
   return (
     <div style={ps.content}>
       <h2 style={ps.title}>Brainstorm Solutions</h2>
       <p style={ps.desc}>Now the creative part. Let's generate ideas — wild and practical.</p>
-      <ChatThread messages={chat.messages.filter((m, i) => !(i === 0 && m.role === "user" && m.content.startsWith("[SYSTEM:")))} loading={chat.loading} onSend={msg => chat.send(msg)} placeholder="React to the ideas — what excites you? What would you change?" />
+      <ChatThread messages={chat.messages.filter((m, i) => !(i === 0 && m.role === "user" && m.content.startsWith("[SYSTEM:")))} loading={chat.loading} onSend={msg => chat.send(msg)} placeholder="React to the ideas — what excites you?" />
       {chat.messages.length > 4 && <button onClick={proceed} style={ps.nextBtn}>Narrow Down & Refine →</button>}
     </div>
   );
 }
 
 function RefinePhase({ data, setData, onNext }) {
-  const chat = useChat(`You are an innovation coach at HAIIC helping someone refine their best idea.\nField: ${data.field}\nRole: ${data.role}\nBrainstorming: ${(data.ideationDiscussion || "").substring(0, 1500)}\nHelp them pick their strongest idea, get technical — components, materials, mechanisms, what makes it novel. Push for specificity. After 3-4 exchanges help them articulate: "A [thing] that [does what] by [how] to solve [problem]"`);
+  const chat = useChat(`You are an innovation coach at HAIIC helping someone refine their best idea.\nField: ${data.field}\nRole: ${data.role}\nBrainstorming: ${(data.ideationDiscussion || "").substring(0, 1500)}\nHelp them pick the strongest idea, get technical — components, materials, mechanisms, novelty. Push for specificity.`);
   const initialized = useRef(false);
-  useEffect(() => { if (!initialized.current && chat.messages.length === 0) { initialized.current = true; chat.send("[SYSTEM: Help select and refine the strongest idea from brainstorming. Push for technical specificity.]"); } }, []);
+  useEffect(() => { if (!initialized.current && chat.messages.length === 0) { initialized.current = true; chat.send("[SYSTEM: Help select and refine the strongest idea. Push for technical specificity.]"); } }, []);
   const proceed = () => { setData({ ...data, refineDiscussion: chat.messages.map(m => `${m.role}: ${m.content}`).join("\n") }); onNext(); };
   const noveltyContext = `Field: ${data.field || "—"}\nRole: ${data.role || "—"}\nProblem: ${(data.problemDiscussion || "").substring(0, 500)}\nIdeas: ${(data.ideationDiscussion || "").substring(0, 500)}\nRefinement: ${(data.refineDiscussion || "").substring(0, 600)}`;
   return (
     <div style={ps.content}>
       <h2 style={ps.title}>Refine Your Invention</h2>
-      <p style={ps.desc}>Let's take the strongest idea and make it concrete. Specificity is what turns a good idea into a patentable invention.</p>
+      <p style={ps.desc}>Let's take the strongest idea and make it concrete.</p>
       <ChatThread messages={chat.messages.filter((m, i) => !(i === 0 && m.role === "user" && m.content.startsWith("[SYSTEM:")))} loading={chat.loading} onSend={msg => chat.send(msg)} placeholder="Describe how it would work in more detail..." />
       {chat.messages.length > 4 && (<><button onClick={proceed} style={ps.nextBtn}>Generate Invention Brief →</button><NoveltyAdvisor data={data} context={noveltyContext} onSave={(u) => setData({ ...data, ...u })} /></>)}
     </div>
@@ -338,7 +303,7 @@ function SummaryPhase({ data, setData, projectName }) {
   const generateBrief = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ system: `Generate a structured Invention Brief for HAIIC with these sections:\nINVENTION BRIEF\n===============\nTitle: [title]\nField: [field]\nInventor Background: [summary]\n\nPROBLEM STATEMENT\n[2-3 sentences]\n\nPROPOSED SOLUTION\n[2-3 paragraphs]\n\nKEY COMPONENTS\n[list]\n\nNOVELTY FACTORS\n[what makes it different]\n\nTARGET USERS\n[who and why]\n\nRECOMMENDED NEXT STEP\nThis Invention Brief is ready to be taken into Patent Forge.`, messages: [{ role: "user", content: `Generate the Invention Brief:\nField: ${data.field}\nRole: ${data.role}\nInsight: ${data.insight}\nProblem: ${(data.problemDiscussion || "").substring(0, 1200)}\nExploration: ${(data.deepenDiscussion || "").substring(0, 1200)}\nBrainstorming: ${(data.ideationDiscussion || "").substring(0, 1200)}\nRefinement: ${(data.refineDiscussion || "").substring(0, 1200)}` }], max_tokens: 2000 }) });
+      const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ system: `Generate a structured Invention Brief for HAIIC with these sections:\nINVENTION BRIEF\n===============\nTitle: [title]\nField: [field]\nInventor Background: [summary]\n\nPROBLEM STATEMENT\n[2-3 sentences]\n\nPROPOSED SOLUTION\n[2-3 paragraphs]\n\nKEY COMPONENTS\n[list]\n\nNOVELTY FACTORS\n[what makes it different]\n\nTARGET USERS\n[who and why]\n\nRECOMMENDED NEXT STEP\nThis Invention Brief is ready to be taken into Patent Forge.`, messages: [{ role: "user", content: `Generate the Brief:\nField: ${data.field}\nRole: ${data.role}\nInsight: ${data.insight}\nProblem: ${(data.problemDiscussion || "").substring(0, 1000)}\nExploration: ${(data.deepenDiscussion || "").substring(0, 1000)}\nBrainstorming: ${(data.ideationDiscussion || "").substring(0, 1000)}\nRefinement: ${(data.refineDiscussion || "").substring(0, 1000)}` }], max_tokens: 2000 }) });
       const result = await res.json();
       const text = result.content?.map(i => i.type === "text" ? i.text : "").join("\n") || "Unable to generate brief.";
       setBrief(text); setData(prev => ({ ...prev, inventionBrief: text }));
@@ -374,56 +339,48 @@ function SummaryPhase({ data, setData, projectName }) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function BrainstormPage() {
-  const router  = useRouter();
-  const [user,    setUser]    = useState(null);
+  const router = useRouter();
+  const [user,        setUser]        = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [view,    setView]    = useState("dashboard");
-  const [project, setProject] = useState(null);
-  const [phase,   setPhase]   = useState(0);
-  const [data,    setData]    = useState({});
+  const [view,        setView]        = useState("dashboard");
+  const [project,     setProject]     = useState(null);
+  const [phase,       setPhase]       = useState(0);
+  const [data,        setData]        = useState({});
 
-  // Auth check
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) { router.push("/login?next=/brainstorm"); return; }
-      setUser(session.user);
-      setAuthLoading(false);
+      setUser(session.user); setAuthLoading(false);
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!session) router.push("/login?next=/brainstorm");
-      else setUser(session.user);
+      else { setUser(session.user); setAuthLoading(false); }
     });
     return () => subscription.unsubscribe();
   }, []);
 
-  // Auto-save to Supabase
   useEffect(() => {
     if (!project || authLoading) return;
-    const save = async () => {
+    const timer = setTimeout(async () => {
       await supabase.from(TABLE).update({ phase, data, updated_at: new Date().toISOString() }).eq("id", project.id);
-    };
-    const timer = setTimeout(save, 800);
+    }, 800);
     return () => clearTimeout(timer);
   }, [phase, data]);
 
   const handleSetData = (newData) => setData(newData);
   const goNext = () => setPhase(p => Math.min(p + 1, PHASES.length - 1));
   const goToPhase = (t) => { if (t < phase) setPhase(t); };
-
   const handleNew = (proj) => { setProject(proj); setPhase(proj.phase || 0); setData(proj.data || {}); setView("session"); };
   const handleResume = (proj) => { setProject(proj); setPhase(proj.phase || 0); setData(proj.data || {}); setView("session"); };
   const handleDashboard = async () => {
     if (project) await supabase.from(TABLE).update({ phase, data, updated_at: new Date().toISOString() }).eq("id", project.id);
     setView("dashboard"); setProject(null); setPhase(0); setData({});
   };
-  const handleSave = async () => {
-    if (!project) return;
-    await supabase.from(TABLE).update({ phase, data, updated_at: new Date().toISOString() }).eq("id", project.id);
-  };
+  const handleSave = async () => { if (project) await supabase.from(TABLE).update({ phase, data, updated_at: new Date().toISOString() }).eq("id", project.id); };
   const handleExport = () => { if (project) exportToDocx({ ...project, phase, data }); };
   const handleSignOut = async () => { await supabase.auth.signOut(); router.push("/login"); };
 
-  if (authLoading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", color: theme.textMuted, fontFamily: "'DM Sans', sans-serif" }}>Loading…</div>;
+  if (authLoading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", color: "#888", fontFamily: "'DM Sans', sans-serif", fontSize: 16 }}>Loading…</div>;
 
   if (view === "dashboard") {
     return (
@@ -480,7 +437,6 @@ const styles = {
   phases: { display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 32, paddingBottom: 20, borderBottom: `1px solid ${theme.border}` },
   phaseChip: { border: "1px solid", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap", transition: "all 0.15s ease" },
 };
-
 const ps = {
   content:  { marginTop: 8 },
   title:    { fontFamily: "'Playfair Display', serif", fontSize: 24, fontWeight: 700, color: theme.text, marginBottom: 12 },
@@ -496,7 +452,6 @@ const ps = {
   copyBtn:  { padding: "12px 20px", background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.textMuted, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   forgeBtn: { padding: "12px 20px", background: theme.red, border: "none", borderRadius: 8, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", display: "inline-flex", alignItems: "center" },
 };
-
 const db = {
   topRow:     { display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 4 },
   userRow:    { display: "flex", alignItems: "center", gap: 10 },
@@ -514,7 +469,6 @@ const db = {
   iconBtn:    { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 7, color: theme.textMuted, padding: "7px 10px", fontSize: 13, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   empty:      { textAlign: "center", padding: "40px 20px", color: theme.textDim, fontSize: 14, border: `1px dashed ${theme.border}`, borderRadius: 10 },
 };
-
 const tb = {
   bar:         { display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, marginBottom: 20, flexWrap: "wrap" },
   dashBtn:     { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
@@ -524,7 +478,6 @@ const tb = {
   userEmail:   { fontSize: 11, color: theme.textDim },
   signOutBtn:  { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "5px 10px", fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
 };
-
 const na = {
   wrap:        { marginTop: 24, borderTop: `1px solid ${theme.border}`, paddingTop: 16 },
   toggle:      { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.textMuted, padding: "10px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", display: "flex", alignItems: "center", gap: 8 },
