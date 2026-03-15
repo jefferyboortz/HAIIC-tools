@@ -52,7 +52,7 @@ export default function LoginPage() {
       <div style={s.card}>
         <div style={s.header}>
           <img src={logoSrc} alt={toolName} style={s.logo} />
-          <h1 style={s.title}>{toolName}</h1>
+          <p style={s.attribution}>A Human-AI Innovation Commons Tool</p>
           <p style={s.subtitle}>Your invention sessions, saved securely across any device.</p>
         </div>
 
@@ -85,7 +85,7 @@ const s = {
   card:        { background: "#1a1a1a", border: "1px solid #333", borderRadius: 16, padding: 40, width: "100%", maxWidth: 420 },
   header:      { textAlign: "center", marginBottom: 32 },
   logo:        { height: 48, width: "auto", margin: "0 auto 12px", display: "block" },
-  title:       { fontFamily: "'Playfair Display', serif", fontSize: 26, fontWeight: 700, color: "#f0f0f0", marginBottom: 8 },
+  attribution: { fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#C0392B", marginBottom: 8, marginTop: 4 },
   subtitle:    { fontSize: 14, color: "#888", lineHeight: 1.5 },
   toggle:      { display: "flex", background: "#222", borderRadius: 8, padding: 4, marginBottom: 24, gap: 4 },
   toggleBtn:   { flex: 1, background: "transparent", border: "none", borderRadius: 6, color: "#888", padding: "8px 0", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
