@@ -28,7 +28,6 @@ export default function Home() {
             <div style={styles.cardHeader}>
               <img src="/brainstorm-logo.png" alt="Brainstorm" style={styles.cardLogo} />
             </div>
-            <h2 style={styles.cardTitle}>Brainstorm</h2>
             <p style={styles.cardDesc}>
               An AI coach that helps you identify patentable innovations hiding in your existing
               expertise. Through guided conversation, it draws out ideas you didn't realize had
@@ -49,7 +48,6 @@ export default function Home() {
             <div style={styles.cardHeader}>
               <img src="/patentforge-logo.png" alt="Patent Forge" style={styles.cardLogo} />
             </div>
-            <h2 style={styles.cardTitle}>Patent Forge</h2>
             <p style={styles.cardDesc}>
               Walks you through every section of a provisional patent application with real-time AI
               guidance on claims drafting, prior art, and technical specifications.
