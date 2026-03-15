@@ -127,16 +127,25 @@ async function exportToDocx(project) {
     spacer(320),
   );
 
-  // ── Benefit-Sharing Acknowledgment ─────────────────────────────────────────
+  // ── Our Shared Vision ──────────────────────────────────────────────────────
   children.push(
-    sectionHeading("HAIIC Benefit-Sharing Acknowledgment"),
+    sectionHeading("Our Shared Vision"),
     spacer(80),
     bodyText(
-      `The undersigned inventor agrees that upon issuance of any non-provisional patent derived from this application, commercialization rights shall be administered under the HAIIC Benefit-Sharing Framework, with revenue distributed equally among (1) the inventor, (2) programs supporting workers displaced by AI automation, and (3) AI safety and alignment research.`
+      `HAIIC was built on the belief that when AI helps create something valuable, the wealth it generates should flow back to the people AI affects most. Patent Forge is free because democratizing invention is the right thing to do — no fine print, no hidden fees, no claiming ownership of your idea.`
+    ),
+    spacer(80),
+    bodyText(
+      `We're not asking inventors to sign a contract. We're inviting them into a vision. The model we live by — and hope inspires others — distributes the value of AI-assisted innovation equally: one third to the inventor who brought the expertise and lived experience; one third to programs supporting workers displaced by AI; and one third to AI safety research so that AI keeps working for everyone.`
+    ),
+    spacer(80),
+    bodyText(
+      `This is our compass, not a clause. The invention belongs to its inventor. But if it succeeds, we hope they'll remember where the idea started — and consider paying it forward.`,
+      { italics: true, color: "888888" }
     ),
     spacer(80),
     labelValue("Inventor:", data.inventorName || "—"),
-    labelValue("Date acknowledged:", new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })),
+    labelValue("Date:", new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })),
     spacer(160),
   );
 
