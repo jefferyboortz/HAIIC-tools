@@ -8,22 +8,27 @@ const supabase = createClient(
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cnV6cHBmbGdkYmRkeHl5bHh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2MDQ1NTEsImV4cCI6MjA4OTE4MDU1MX0.y6acgCo6EZZiEDIJHSx6J3T60L1P6M_DH3vTIulFvJ0"
 );
 
+const PLACEHOLDER_BG = `e.g. "30 years as an ER nurse, beekeeper on weekends"
+or "Stay-at-home parent, used to work in software, woodworker"
+or "Retired teacher, lifelong tinkerer, love fixing things"`;
+
 export default function ProfilePage() {
   const router = useRouter();
   const next   = router.query.next   || "/";
-  const reason = router.query.reason || null;  // "signup" | "missing" | null (edit)
+  const reason = router.query.reason || null;
 
   const [user,       setUser]       = useState(null);
   const [name,       setName]       = useState("");
   const [background, setBackground] = useState("");
-  const [mode,       setMode]       = useState("loading");   // loading | create | edit
+  const [mode,       setMode]       = useState("loading");
   const [saving,     setSaving]     = useState(false);
   const [error,      setError]      = useState(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session) {
-        router.push(`/login?next=${encodeURIComponent("/profile" + (router.asPath.includes("?") ? router.asPath.slice(router.asPath.indexOf("?")) : ""))}`);
+        const params = router.asPath.includes("?") ? router.asPath.slice(router.asPath.indexOf("?")) : "";
+        router.push(`/login?next=${encodeURIComponent("/profile" + params)}`);
         return;
       }
       setUser(session.user);
@@ -68,7 +73,6 @@ export default function ProfilePage() {
 
   const handleCancel = () => router.push(next);
 
-  // ─── Loading state ────────────────────────────────────────
   if (mode === "loading") {
     return (
       <div style={s.page}>
@@ -79,7 +83,6 @@ export default function ProfilePage() {
     );
   }
 
-  // ─── Headline copy per mode/reason ────────────────────────
   let headline, subhead;
   if (mode === "create" && reason === "missing") {
     headline = "Let's rebuild your profile";
@@ -124,7 +127,7 @@ export default function ProfilePage() {
           style={s.textarea}
           value={background}
           onChange={(e) => setBackground(e.target.value)}
-          placeholder={'e.g. "30 years as an ER nurse, beekeeper on weekends"\nor "Stay-at-home parent, used to work in software, woodworker"\nor "Retired teacher, lifelong tinkerer, love fixing things"'}
+          placeholder={PLACEHOLDER_BG}
           rows={6}
         />
 
@@ -155,4 +158,19 @@ export default function ProfilePage() {
 
 const s = {
   page:        { minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#111", padding: 24 },
-  card:        { background: "#1a
+  card:        { background: "#1a1a1a", border: "1px solid #333", borderRadius: 16, padding: 40, width: "100%", maxWidth: 540 },
+  header:      { marginBottom: 28 },
+  attribution: { fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#C0392B", marginBottom: 12, textAlign: "center" },
+  headline:    { fontFamily: "'Playfair Display', serif", fontSize: 28, fontWeight: 700, color: "#f0f0f0", marginBottom: 12, textAlign: "center", lineHeight: 1.2 },
+  subhead:     { fontSize: 14, color: "#aaa", lineHeight: 1.6, textAlign: "center", marginBottom: 16 },
+  signedInAs:  { fontSize: 12, color: "#666", textAlign: "center", marginTop: 8 },
+  label:       { display: "block", fontSize: 13, fontWeight: 600, color: "#aaa", marginBottom: 6, marginTop: 16 },
+  helper:      { fontSize: 12, color: "#777", lineHeight: 1.5, marginBottom: 8, marginTop: 0 },
+  input:       { width: "100%", background: "#1a1a1a", border: "1px solid #333", borderRadius: 8, color: "#f0f0f0", padding: "10px 14px", fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box" },
+  textarea:    { width: "100%", background: "#1a1a1a", border: "1px solid #333", borderRadius: 8, color: "#f0f0f0", padding: "10px 14px", fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.6 },
+  error:       { background: "#3d1515", border: "1px solid #7d2020", borderRadius: 7, color: "#ff8080", padding: "10px 14px", fontSize: 13, marginTop: 16, lineHeight: 1.5 },
+  actions:     { display: "flex", gap: 10, marginTop: 24 },
+  submitBtn:   { background: "#C0392B", border: "none", borderRadius: 8, color: "#fff", padding: "13px 24px", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  cancelBtn:   { background: "transparent", border: "1px solid #333", borderRadius: 8, color: "#888", padding: "13px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  privacy:     { fontSize: 11, color: "#555", textAlign: "center", marginTop: 20, lineHeight: 1.5 },
+};
