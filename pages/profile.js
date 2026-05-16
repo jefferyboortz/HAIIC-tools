@@ -50,6 +50,7 @@ export default function ProfilePage() {
   const [user, setUser] = useState(null);
   const [mode, setMode] = useState("loading");
   const [saving, setSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
   const [error, setError] = useState(null);
 
   const [name, setName] = useState("");
@@ -61,7 +62,6 @@ export default function ProfilePage() {
   const [uploadError, setUploadError] = useState(null);
   const [extractionMsg, setExtractionMsg] = useState(null);
 
-  // ── Initial load ─────────────────────────────────────────
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session) {
@@ -88,7 +88,6 @@ export default function ProfilePage() {
     });
   }, []);
 
-  // ── CV handlers ──────────────────────────────────────────
   const handleFilePick = () => fileInputRef.current?.click();
 
   const handleFileChange = async (e) => {
@@ -159,7 +158,6 @@ export default function ProfilePage() {
     setExtractionMsg(null);
   };
 
-  // ── Save ─────────────────────────────────────────────────
   const handleSave = async () => {
     setError(null);
     if (!name.trim()) {
@@ -180,17 +178,25 @@ export default function ProfilePage() {
           { onConflict: "user_id" }
         );
       if (upsertErr) throw upsertErr;
-      router.push(next);
+
+      // Show "Saved ✓" briefly, then redirect
+      setJustSaved(true);
+
+      // Smart destination: new profile + no specific next = welcome banner on home
+      let dest = next;
+      if (mode === "create" && next === "/") {
+        dest = `/?welcome=true&name=${encodeURIComponent(name.trim())}`;
+      }
+
+      setTimeout(() => router.push(dest), 900);
     } catch (err) {
       setError(err.message || "Couldn't save your profile. Want to try again?");
-    } finally {
       setSaving(false);
     }
   };
 
   const handleCancel = () => router.push(next);
 
-  // ── Render ───────────────────────────────────────────────
   if (mode === "loading") {
     return (
       <div style={s.page}>
@@ -295,7 +301,7 @@ export default function ProfilePage() {
           </div>
         ))}
 
-        {totalChars === 0 && (
+        {totalChars === 0 && !justSaved && (
           <p style={s.softNudge}>
             All your background sections are empty. You can save now, but the more we know,
             the better we can help you in Brainstorm and the other apps.
@@ -303,24 +309,25 @@ export default function ProfilePage() {
         )}
 
         {error && <div style={s.errorBox}>{error}</div>}
+        {justSaved && <div style={s.successBox}>✓ Saved! Taking you home…</div>}
 
         <div style={s.actions}>
           {mode === "edit" && (
-            <button onClick={handleCancel} style={s.cancelBtn} disabled={saving}>
+            <button onClick={handleCancel} style={s.cancelBtn} disabled={saving || justSaved}>
               Cancel
             </button>
           )}
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || justSaved}
             style={{
               ...s.submitBtn,
-              opacity: saving ? 0.6 : 1,
+              opacity: (saving || justSaved) ? 0.6 : 1,
               flex: mode === "edit" ? 1 : "unset",
               width: mode === "edit" ? "auto" : "100%",
             }}
           >
-            {saving ? "Saving…" : submitLabel}
+            {justSaved ? "Saved ✓" : saving ? "Saving…" : submitLabel}
           </button>
         </div>
 
