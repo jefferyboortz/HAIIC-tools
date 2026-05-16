@@ -1,15 +1,27 @@
 import Link from "next/link";
+import { useRouter } from "next/router";
 import Layout from "../components/Layout";
 import theme from "../components/theme";
 
 export default function Home() {
+  const router = useRouter();
+  const showWelcome = router.query.welcome === "true" && router.query.name;
+  const welcomeName = typeof router.query.name === "string" ? router.query.name : "";
+
   return (
     <Layout title="HAIC Tools">
 
-      {/* Storage warning banner */}
-      <div style={styles.storageBanner}>
-        💾 <strong>Save tip:</strong> Your projects are saved to this browser only. Export your .docx regularly as a backup — and avoid clearing your browser history mid-session.
-      </div>
+      {showWelcome && (
+        <div style={styles.welcomeBanner}>
+          <p style={styles.welcomeAttribution}>Welcome, {welcomeName}</p>
+          <h2 style={styles.welcomeHeadline}>Your profile is ready.</h2>
+          <p style={styles.welcomeBody}>
+            Where would you like to start? Brainstorm helps you discover patentable ideas
+            hiding in your expertise. Patent Forge walks you through drafting a provisional
+            patent application step by step.
+          </p>
+        </div>
+      )}
 
       <div style={styles.hero}>
         <p style={styles.tagline}>Human-AI Innovation Commons</p>
@@ -99,15 +111,32 @@ export default function Home() {
 }
 
 const styles = {
-  storageBanner: {
-    background: theme.surfaceAlt,
-    border: `1px solid ${theme.border}`,
-    borderRadius: 8,
-    padding: "10px 16px",
-    fontSize: 13,
+  welcomeBanner: {
+    background: theme.surface,
+    border: `1px solid ${theme.red}`,
+    borderRadius: 12,
+    padding: "24px 28px",
+    marginBottom: 40,
+  },
+  welcomeAttribution: {
+    color: theme.red,
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: 3,
+    textTransform: "uppercase",
+    marginBottom: 8,
+  },
+  welcomeHeadline: {
+    fontFamily: "'Playfair Display', serif",
+    fontSize: 22,
+    fontWeight: 700,
+    color: theme.text,
+    marginBottom: 8,
+  },
+  welcomeBody: {
+    fontSize: 14,
+    lineHeight: 1.6,
     color: theme.textMuted,
-    lineHeight: 1.5,
-    marginBottom: 32,
   },
   hero: { textAlign: "center", marginBottom: 60 },
   tagline: {
