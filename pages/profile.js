@@ -179,10 +179,8 @@ export default function ProfilePage() {
         );
       if (upsertErr) throw upsertErr;
 
-      // Show "Saved ✓" briefly, then redirect
       setJustSaved(true);
 
-      // Smart destination: new profile + no specific next = welcome banner on home
       let dest = next;
       if (mode === "create" && next === "/") {
         dest = `/?welcome=true&name=${encodeURIComponent(name.trim())}`;
@@ -308,27 +306,32 @@ export default function ProfilePage() {
           </p>
         )}
 
-        {error && <div style={s.errorBox}>{error}</div>}
-        {justSaved && <div style={s.successBox}>✓ Saved! Taking you home…</div>}
-
-        <div style={s.actions}>
-          {mode === "edit" && (
-            <button onClick={handleCancel} style={s.cancelBtn} disabled={saving || justSaved}>
-              Cancel
-            </button>
+        <div style={s.stickyBar}>
+          {(justSaved || error) && (
+            <div style={s.barStatus}>
+              {justSaved && <span style={s.barSuccess}>✓ Saved! Taking you home…</span>}
+              {error && !justSaved && <span style={s.barError}>{error}</span>}
+            </div>
           )}
-          <button
-            onClick={handleSave}
-            disabled={saving || justSaved}
-            style={{
-              ...s.submitBtn,
-              opacity: (saving || justSaved) ? 0.6 : 1,
-              flex: mode === "edit" ? 1 : "unset",
-              width: mode === "edit" ? "auto" : "100%",
-            }}
-          >
-            {justSaved ? "Saved ✓" : saving ? "Saving…" : submitLabel}
-          </button>
+          <div style={s.barButtons}>
+            {mode === "edit" && (
+              <button onClick={handleCancel} style={s.cancelBtn} disabled={saving || justSaved}>
+                Cancel
+              </button>
+            )}
+            <button
+              onClick={handleSave}
+              disabled={saving || justSaved}
+              style={{
+                ...s.submitBtn,
+                opacity: (saving || justSaved) ? 0.6 : 1,
+                flex: mode === "edit" ? 1 : "unset",
+                width: mode === "edit" ? "auto" : "100%",
+              }}
+            >
+              {justSaved ? "Saved ✓" : saving ? "Saving…" : submitLabel}
+            </button>
+          </div>
         </div>
 
         <p style={s.privacy}>
@@ -382,7 +385,12 @@ const s = {
   successBox:  { background: "#153d1a", border: "1px solid #2d7a3a", borderRadius: 7, color: "#80ff99", padding: "10px 14px", fontSize: 13, marginTop: 12, lineHeight: 1.5 },
   softNudge:   { background: "#2a2419", border: "1px solid #4a4019", borderRadius: 7, color: "#d4b87a", padding: "10px 14px", fontSize: 12, marginTop: 12, lineHeight: 1.5 },
 
-  actions:     { display: "flex", gap: 10, marginTop: 24 },
+  stickyBar:   { position: "sticky", bottom: 0, background: "#1a1a1a", borderTop: "1px solid #333", marginTop: 24, paddingTop: 16, paddingBottom: 16, zIndex: 10 },
+  barStatus:   { textAlign: "center", marginBottom: 12 },
+  barSuccess:  { color: "#80ff99", fontSize: 13, fontWeight: 600 },
+  barError:    { color: "#ff8080", fontSize: 13 },
+  barButtons:  { display: "flex", gap: 10 },
+
   submitBtn:   { background: "#C0392B", border: "none", borderRadius: 8, color: "#fff", padding: "13px 24px", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   cancelBtn:   { background: "transparent", border: "1px solid #333", borderRadius: 8, color: "#888", padding: "13px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   privacy:     { fontSize: 11, color: "#555", textAlign: "center", marginTop: 20, lineHeight: 1.5 },
