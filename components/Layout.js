@@ -1,8 +1,56 @@
+import { useState, useEffect } from "react";
+import { useRouter } from "next/router";
 import Head from "next/head";
 import Link from "next/link";
+import { createClient } from "@supabase/supabase-js";
 import theme from "./theme";
 
+const supabase = createClient(
+  "https://quruzppflgdbddxyylxu.supabase.co",
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cnV6cHBmbGdkYmRkeHl5bHh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2MDQ1NTEsImV4cCI6MjA4OTE4MDU1MX0.y6acgCo6EZZiEDIJHSx6J3T60L1P6M_DH3vTIulFvJ0"
+);
+
 export default function Layout({ children, title, logoSrc }) {
+  const router = useRouter();
+  const [authState, setAuthState] = useState("loading"); // loading | signedIn | signedOut
+  const [displayName, setDisplayName] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadProfile = async (session) => {
+      if (!session) {
+        if (mounted) {
+          setAuthState("signedOut");
+          setDisplayName(null);
+        }
+        return;
+      }
+      const { data: profile } = await supabase
+        .from("user_profiles")
+        .select("name")
+        .eq("user_id", session.user.id)
+        .maybeSingle();
+      if (!mounted) return;
+      setAuthState("signedIn");
+      // Prefer first name only for the nav — keep it short
+      const fullName = profile?.name || "";
+      const firstName = fullName.trim().split(/\s+/)[0] || "Profile";
+      setDisplayName(firstName);
+    };
+
+    supabase.auth.getSession().then(({ data: { session } }) => loadProfile(session));
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      loadProfile(session);
+    });
+
+    return () => {
+      mounted = false;
+      subscription?.unsubscribe();
+    };
+  }, []);
+
   return (
     <>
       <Head>
@@ -29,6 +77,19 @@ export default function Layout({ children, title, logoSrc }) {
           <div style={styles.navLinks}>
             <Link href="/brainstorm" style={styles.navLink}>Brainstorm</Link>
             <Link href="/patent-forge" style={styles.navLink}>Patent Forge</Link>
+            <span style={styles.navDivider}>|</span>
+            {authState === "loading" && <span style={styles.navMuted}>…</span>}
+            {authState === "signedIn" && (
+              <Link href="/profile" style={styles.navAccount}>{displayName}</Link>
+            )}
+            {authState === "signedOut" && (
+              <Link
+                href={`/login?next=${encodeURIComponent(router.asPath || "/")}`}
+                style={styles.navLink}
+              >
+                Sign In
+              </Link>
+            )}
           </div>
         </nav>
         <main style={styles.main}>{children}</main>
@@ -74,13 +135,29 @@ const styles = {
     color: theme.text,
     letterSpacing: 2,
   },
-  navLinks: { display: "flex", gap: 24 },
+  navLinks: { display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap" },
   navLink: {
     color: theme.textMuted,
     textDecoration: "none",
     fontSize: 14,
     fontWeight: 600,
     transition: "color 0.2s",
+  },
+  navDivider: {
+    color: theme.textDim,
+    fontSize: 14,
+    userSelect: "none",
+  },
+  navAccount: {
+    color: theme.red,
+    textDecoration: "none",
+    fontSize: 14,
+    fontWeight: 700,
+    transition: "color 0.2s",
+  },
+  navMuted: {
+    color: theme.textDim,
+    fontSize: 14,
   },
   main: { flex: 1, maxWidth: 900, width: "100%", margin: "0 auto", padding: "40px 24px" },
   footer: {
