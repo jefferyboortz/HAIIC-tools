@@ -62,6 +62,10 @@ export default function ProfilePage() {
   const [uploadError, setUploadError] = useState(null);
   const [extractionMsg, setExtractionMsg] = useState(null);
 
+  const [mfaEnabled, setMfaEnabled] = useState(false);
+  const [mfaLoading, setMfaLoading] = useState(true);
+  const [mfaModal, setMfaModal] = useState(null); // null | "enrolling"
+
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session) {
@@ -85,8 +89,24 @@ export default function ProfilePage() {
       } else {
         setMode("create");
       }
+
+      await checkMfaStatus();
     });
   }, []);
+
+  const checkMfaStatus = async () => {
+    setMfaLoading(true);
+    try {
+      const { data, error: listErr } = await supabase.auth.mfa.listFactors();
+      if (listErr) throw listErr;
+      const verified = (data?.totp || []).find((f) => f.status === "verified");
+      setMfaEnabled(!!verified);
+    } catch {
+      setMfaEnabled(false);
+    } finally {
+      setMfaLoading(false);
+    }
+  };
 
   const handleFilePick = () => fileInputRef.current?.click();
 
@@ -194,6 +214,21 @@ export default function ProfilePage() {
   };
 
   const handleCancel = () => router.push(next);
+
+  const handleDisable2FA = async () => {
+    if (!confirm("Turn off two-factor authentication? You'll go back to signing in with just your password.")) return;
+    try {
+      const { data, error: listErr } = await supabase.auth.mfa.listFactors();
+      if (listErr) throw listErr;
+      const verified = (data?.totp || []).find((f) => f.status === "verified");
+      if (verified) {
+        await supabase.auth.mfa.unenroll({ factorId: verified.id });
+      }
+      setMfaEnabled(false);
+    } catch (err) {
+      alert("Couldn't turn off two-factor authentication. Please try again. (" + (err.message || "Unknown error") + ")");
+    }
+  };
 
   if (mode === "loading") {
     return (
@@ -315,6 +350,28 @@ export default function ProfilePage() {
           </p>
         )}
 
+        <div style={s.securitySection}>
+          <h2 style={s.securityHeading}>Account security</h2>
+          <p style={s.securityIntro}>
+            Two-factor authentication keeps your account safe even if someone gets your password.
+            It takes thirty seconds to set up — we recommend it.
+          </p>
+
+          {mfaLoading ? (
+            <p style={s.helper}>Checking…</p>
+          ) : mfaEnabled ? (
+            <div style={s.mfaEnabledRow}>
+              <span style={s.mfaCheck}>✓</span>
+              <span style={s.mfaEnabledText}>Two-factor authentication is on.</span>
+              <button onClick={handleDisable2FA} style={s.linkBtn}>Turn off</button>
+            </div>
+          ) : (
+            <button onClick={() => setMfaModal("enrolling")} style={s.enrollBtn}>
+              Turn on two-factor authentication →
+            </button>
+          )}
+        </div>
+
         <div style={s.stickyBar}>
           {(justSaved || error) && (
             <div style={s.barStatus}>
@@ -347,6 +404,178 @@ export default function ProfilePage() {
           Your profile is private and only visible to you. HAIIC does not sell your data
           or share it with anyone else.
         </p>
+      </div>
+
+      {mfaModal === "enrolling" && (
+        <EnrollMfaModal
+          onClose={() => setMfaModal(null)}
+          onComplete={() => {
+            setMfaModal(null);
+            setMfaEnabled(true);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function EnrollMfaModal({ onClose, onComplete }) {
+  const [step, setStep] = useState("loading"); // loading | scan | error
+  const [factorId, setFactorId] = useState(null);
+  const [qrSvg, setQrSvg] = useState(null);
+  const [secret, setSecret] = useState(null);
+  const [code, setCode] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [errMsg, setErrMsg] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+    let createdFactorId = null;
+
+    const start = async () => {
+      try {
+        // Clean up any leftover unverified factors from prior aborted attempts
+        const { data: existing } = await supabase.auth.mfa.listFactors();
+        const unverified = (existing?.totp || []).filter((f) => f.status === "unverified");
+        for (const f of unverified) {
+          try { await supabase.auth.mfa.unenroll({ factorId: f.id }); } catch {}
+        }
+
+        const { data, error } = await supabase.auth.mfa.enroll({ factorType: "totp" });
+        if (error) throw error;
+        if (!mounted) return;
+        createdFactorId = data.id;
+        setFactorId(data.id);
+        setQrSvg(data.totp?.qr_code || null);
+        setSecret(data.totp?.secret || null);
+        setStep("scan");
+      } catch (err) {
+        if (!mounted) return;
+        setErrMsg(err.message || "Couldn't start setup. Please try again.");
+        setStep("error");
+      }
+    };
+    start();
+
+    // If user closes modal mid-flow without verifying, clean up the unverified factor
+    return () => {
+      mounted = false;
+      if (createdFactorId) {
+        supabase.auth.mfa.listFactors().then(({ data }) => {
+          const f = (data?.totp || []).find((x) => x.id === createdFactorId && x.status === "unverified");
+          if (f) {
+            supabase.auth.mfa.unenroll({ factorId: createdFactorId }).catch(() => {});
+          }
+        });
+      }
+    };
+  }, []);
+
+  const handleVerify = async () => {
+    setErrMsg(null);
+    const trimmed = code.trim();
+    if (trimmed.length !== 6 || !/^\d+$/.test(trimmed)) {
+      setErrMsg("The code is six digits. Take a look at your authenticator app.");
+      return;
+    }
+    setVerifying(true);
+    try {
+      const { data: challenge, error: chErr } = await supabase.auth.mfa.challenge({ factorId });
+      if (chErr) throw chErr;
+      const { error: vErr } = await supabase.auth.mfa.verify({
+        factorId,
+        challengeId: challenge.id,
+        code: trimmed,
+      });
+      if (vErr) throw vErr;
+      onComplete();
+    } catch (err) {
+      setErrMsg(err.message || "That code didn't match. The codes change every 30 seconds — try the newest one.");
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  return (
+    <div style={m.backdrop} onClick={onClose}>
+      <div style={m.modal} onClick={(e) => e.stopPropagation()}>
+        <button onClick={onClose} style={m.closeX} aria-label="Close">×</button>
+
+        {step === "loading" && (
+          <div style={{ textAlign: "center", padding: 40 }}>
+            <p style={m.loadingText}>Setting up two-factor authentication…</p>
+          </div>
+        )}
+
+        {step === "error" && (
+          <div>
+            <h2 style={m.title}>Something went wrong</h2>
+            <p style={m.body}>{errMsg}</p>
+            <button onClick={onClose} style={m.cancelBtn}>Close</button>
+          </div>
+        )}
+
+        {step === "scan" && (
+          <div>
+            <h2 style={m.title}>Set up two-factor authentication</h2>
+            <p style={m.body}>
+              You'll need an authenticator app on your phone. If you don't have one, free options include
+              Google Authenticator, 1Password, Authy, and Microsoft Authenticator. Any of them works.
+            </p>
+
+            <ol style={m.steps}>
+              <li style={m.step}>Open your authenticator app and add a new account.</li>
+              <li style={m.step}>Scan the QR code below with your phone's camera (or your app's scanner).</li>
+              <li style={m.step}>Type the six-digit code your app shows you, then click Verify.</li>
+            </ol>
+
+            {qrSvg && (
+              <div style={m.qrWrap} dangerouslySetInnerHTML={{ __html: qrSvg }} />
+            )}
+
+            {secret && (
+              <details style={m.manualWrap}>
+                <summary style={m.manualToggle}>Can't scan? Use this code instead</summary>
+                <p style={m.manualHelp}>
+                  In your authenticator app, choose "Enter a setup key" or "Manual entry" and paste this:
+                </p>
+                <code style={m.secretCode}>{secret}</code>
+              </details>
+            )}
+
+            <label style={m.codeLabel}>Six-digit code from your app</label>
+            <input
+              style={m.codeInput}
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\s/g, ""))}
+              onKeyDown={(e) => e.key === "Enter" && handleVerify()}
+              placeholder="000000"
+              maxLength={6}
+              inputMode="numeric"
+              autoFocus
+            />
+
+            {errMsg && <div style={m.errorBox}>{errMsg}</div>}
+
+            <p style={m.warning}>
+              <strong>Important:</strong> keep your authenticator app accessible. If you lose access to it
+              and we can't verify it's really you, we may not be able to restore your account.
+            </p>
+
+            <div style={m.actions}>
+              <button onClick={onClose} style={m.cancelBtn} disabled={verifying}>
+                Cancel
+              </button>
+              <button
+                onClick={handleVerify}
+                style={{ ...m.verifyBtn, opacity: verifying ? 0.6 : 1 }}
+                disabled={verifying}
+              >
+                {verifying ? "Verifying…" : "Verify & turn on"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -395,6 +624,14 @@ const s = {
   successBox:  { background: "#153d1a", border: "1px solid #2d7a3a", borderRadius: 7, color: "#80ff99", padding: "10px 14px", fontSize: 13, marginTop: 12, lineHeight: 1.5 },
   softNudge:   { background: "#2a2419", border: "1px solid #4a4019", borderRadius: 7, color: "#d4b87a", padding: "10px 14px", fontSize: 12, marginTop: 12, lineHeight: 1.5 },
 
+  securitySection:  { marginTop: 32, marginBottom: 24, paddingTop: 24, borderTop: "1px solid #333" },
+  securityHeading:  { fontSize: 16, fontWeight: 700, color: "#f0f0f0", marginBottom: 8 },
+  securityIntro:    { fontSize: 13, color: "#aaa", lineHeight: 1.6, marginBottom: 14 },
+  enrollBtn:        { background: "transparent", border: "1px solid #C0392B", borderRadius: 8, color: "#C0392B", padding: "10px 18px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  mfaEnabledRow:    { background: "#1a1a1a", border: "1px solid #2d7a3a", borderRadius: 8, padding: "12px 16px", fontSize: 13, display: "flex", alignItems: "center", gap: 10, color: "#ddd" },
+  mfaCheck:         { color: "#80ff99", fontSize: 16, fontWeight: 700 },
+  mfaEnabledText:   { flex: 1 },
+
   stickyBar:   { position: "sticky", bottom: 0, background: "#1a1a1a", borderTop: "1px solid #333", marginTop: 24, paddingTop: 16, paddingBottom: 16, zIndex: 10 },
   barStatus:   { textAlign: "center", marginBottom: 12 },
   barSuccess:  { color: "#80ff99", fontSize: 13, fontWeight: 600 },
@@ -404,4 +641,27 @@ const s = {
   submitBtn:   { background: "#C0392B", border: "none", borderRadius: 8, color: "#fff", padding: "13px 24px", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   cancelBtn:   { background: "transparent", border: "1px solid #333", borderRadius: 8, color: "#888", padding: "13px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   privacy:     { fontSize: 11, color: "#555", textAlign: "center", marginTop: 20, lineHeight: 1.5 },
+};
+
+const m = {
+  backdrop:     { position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, zIndex: 100 },
+  modal:        { background: "#1a1a1a", border: "1px solid #333", borderRadius: 16, padding: 32, width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", position: "relative" },
+  closeX:       { position: "absolute", top: 12, right: 16, background: "transparent", border: "none", color: "#888", fontSize: 24, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", lineHeight: 1 },
+  loadingText:  { color: "#888", fontSize: 14, fontFamily: "'DM Sans', sans-serif" },
+  title:        { fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 700, color: "#f0f0f0", marginBottom: 12 },
+  body:         { fontSize: 14, color: "#aaa", lineHeight: 1.6, marginBottom: 16 },
+  steps:        { paddingLeft: 20, marginBottom: 20 },
+  step:         { fontSize: 13, color: "#aaa", lineHeight: 1.6, marginBottom: 6 },
+  qrWrap:       { background: "#fff", padding: 16, borderRadius: 8, margin: "0 auto 20px", maxWidth: 220, textAlign: "center" },
+  manualWrap:   { marginBottom: 20 },
+  manualToggle: { fontSize: 12, color: "#C0392B", cursor: "pointer", fontWeight: 600 },
+  manualHelp:   { fontSize: 12, color: "#888", lineHeight: 1.6, marginTop: 8, marginBottom: 6 },
+  secretCode:   { display: "block", background: "#0a0a0a", border: "1px solid #333", borderRadius: 6, padding: "8px 12px", fontSize: 13, color: "#f0f0f0", fontFamily: "monospace", wordBreak: "break-all", marginBottom: 8 },
+  codeLabel:    { display: "block", fontSize: 13, fontWeight: 600, color: "#ddd", marginBottom: 6 },
+  codeInput:    { width: "100%", background: "#0a0a0a", border: "1px solid #333", borderRadius: 8, color: "#f0f0f0", padding: "12px 14px", fontSize: 20, fontFamily: "monospace", outline: "none", boxSizing: "border-box", textAlign: "center", letterSpacing: 4 },
+  errorBox:     { background: "#3d1515", border: "1px solid #7d2020", borderRadius: 7, color: "#ff8080", padding: "10px 14px", fontSize: 13, marginTop: 12, lineHeight: 1.5 },
+  warning:      { fontSize: 12, color: "#d4b87a", lineHeight: 1.5, marginTop: 16, padding: "10px 12px", background: "#2a2419", border: "1px solid #4a4019", borderRadius: 7 },
+  actions:      { display: "flex", gap: 10, marginTop: 20 },
+  cancelBtn:    { background: "transparent", border: "1px solid #333", borderRadius: 8, color: "#888", padding: "12px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  verifyBtn:    { flex: 1, background: "#C0392B", border: "none", borderRadius: 8, color: "#fff", padding: "12px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
 };
