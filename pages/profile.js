@@ -236,16 +236,18 @@ export default function ProfilePage() {
         <div style={s.section}>
           <label style={s.label}>Your handle</label>
           <p style={s.helper}>
-            What you'd like us to call you. Could be your real first name, an inventor nickname,
-            a gamer handle — whatever you'd like to see across the apps. Your legal name is only
-            needed at the moment you file a patent, and only if you want our help merging it into
-            your final document.
+            What you'd like us to call you across all the HAIIC apps. We recommend a
+            nickname or handle rather than your real name — it's not stored anywhere
+            visible to other people, but using a handle keeps your work pseudonymous in
+            case you'd ever like to share a session, a draft, or a screenshot. Your
+            legal name is only needed at the moment you file a patent, and only if you
+            want our help merging it into your final document.
           </p>
           <input
             style={s.input}
             value={handle}
             onChange={(e) => setHandle(e.target.value)}
-            placeholder="e.g. Jeffery, trailbuilder, gardenmom1972..."
+            placeholder="e.g. trailbuilder, gardenmom1972, El Jefe..."
           />
         </div>
 
