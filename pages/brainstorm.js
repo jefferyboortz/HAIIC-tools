@@ -26,8 +26,6 @@ const TABLE       = "brainstorm_projects";
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
-// ─── Export (.docx) ───────────────────────────────────────────────────────────
-
 async function exportToDocx(project) {
   const { name, data, phase } = project;
   const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Header, Footer, PageNumber, TabStopType, TabStopPosition } = await import("docx");
@@ -70,8 +68,6 @@ async function exportToDocx(project) {
   });
   const blob = await Packer.toBlob(doc); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `HAIIC-Brainstorm-${(name || "invention").replace(/[^a-z0-9]/gi, "-").toLowerCase()}.docx`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
 }
-
-// ─── Novelty Advisor ──────────────────────────────────────────────────────────
 
 function NoveltyAdvisor({ data, context, onSave }) {
   const [open, setOpen] = useState(false);
@@ -128,9 +124,7 @@ function NoveltyAdvisor({ data, context, onSave }) {
   );
 }
 
-// ─── Project Dashboard ────────────────────────────────────────────────────────
-
-function ProjectDashboard({ onNew, onResume, onSignOut, userEmail }) {
+function ProjectDashboard({ onNew, onResume, onSignOut, handle }) {
   const [projects, setProjects] = useState([]);
   const [newName,  setNewName]  = useState("");
   const [loading,  setLoading]  = useState(true);
@@ -169,7 +163,7 @@ function ProjectDashboard({ onNew, onResume, onSignOut, userEmail }) {
     <div style={ps.content}>
       <div style={db.topRow}>
         <h2 style={ps.title}>Your Brainstorm Projects</h2>
-        <div style={db.userRow}><span style={db.userEmail}>{userEmail}</span><button onClick={onSignOut} style={db.signOutBtn}>Sign Out</button></div>
+        <div style={db.userRow}><span style={db.userHandle}>{handle}</span><button onClick={onSignOut} style={db.signOutBtn}>Sign Out</button></div>
       </div>
       <p style={ps.desc}>Each project saves automatically — resume from any device, any time.</p>
       <div style={db.newRow}>
@@ -199,8 +193,6 @@ function ProjectDashboard({ onNew, onResume, onSignOut, userEmail }) {
     </div>
   );
 }
-
-// ─── Phase Components ─────────────────────────────────────────────────────────
 
 function WelcomePhase({ onNext }) {
   return (
@@ -336,11 +328,10 @@ function SummaryPhase({ data, setData, projectName }) {
   );
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
-
 export default function BrainstormPage() {
   const router = useRouter();
   const [user,        setUser]        = useState(null);
+  const [handle,      setHandle]      = useState("");
   const [authLoading, setAuthLoading] = useState(true);
   const [view,        setView]        = useState("dashboard");
   const [project,     setProject]     = useState(null);
@@ -348,13 +339,17 @@ export default function BrainstormPage() {
   const [data,        setData]        = useState({});
 
   useEffect(() => {
+    const loadHandle = async (userId) => {
+      const { data: profile } = await supabase.from("user_profiles").select("name").eq("user_id", userId).maybeSingle();
+      setHandle((profile?.name || "").trim() || "Inventor");
+    };
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) { router.push("/login?next=/brainstorm"); return; }
-      setUser(session.user); setAuthLoading(false);
+      setUser(session.user); loadHandle(session.user.id); setAuthLoading(false);
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!session) router.push("/login?next=/brainstorm");
-      else { setUser(session.user); setAuthLoading(false); }
+      else { setUser(session.user); loadHandle(session.user.id); setAuthLoading(false); }
     });
     return () => subscription.unsubscribe();
   }, []);
@@ -386,7 +381,7 @@ export default function BrainstormPage() {
     return (
       <Layout title="Brainstorm" logoSrc="/brainstorm-logo.png">
         <div style={styles.header}><p style={styles.label}>BRAINSTORM</p><h1 style={styles.heading}>Discover Your Next Invention</h1></div>
-        <ProjectDashboard onNew={handleNew} onResume={handleResume} onSignOut={handleSignOut} userEmail={user?.email} />
+        <ProjectDashboard onNew={handleNew} onResume={handleResume} onSignOut={handleSignOut} handle={handle} />
       </Layout>
     );
   }
@@ -400,7 +395,7 @@ export default function BrainstormPage() {
         <div style={tb.actions}>
           <button onClick={handleSave} style={tb.btn}>💾 Save</button>
           <button onClick={handleExport} style={tb.btn}>⬇ Export .docx</button>
-          <span style={tb.userEmail}>{user?.email}</span>
+          <span style={tb.userHandle}>{handle}</span>
           <button onClick={handleSignOut} style={tb.signOutBtn}>Sign Out</button>
         </div>
       </div>
@@ -428,8 +423,6 @@ export default function BrainstormPage() {
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
 const styles = {
   header: { marginBottom: 24 },
   label: { color: theme.red, fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", marginBottom: 8 },
@@ -455,7 +448,7 @@ const ps = {
 const db = {
   topRow:     { display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 4 },
   userRow:    { display: "flex", alignItems: "center", gap: 10 },
-  userEmail:  { fontSize: 12, color: theme.textDim },
+  userHandle: { fontSize: 13, color: theme.red, fontWeight: 700 },
   signOutBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "5px 10px", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   newRow:     { display: "flex", gap: 12, marginBottom: 32, alignItems: "center", flexWrap: "wrap" },
   list:       { display: "flex", flexDirection: "column", gap: 10 },
@@ -475,7 +468,7 @@ const tb = {
   projectName: { flex: 1, fontSize: 13, fontWeight: 600, color: theme.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   actions:     { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" },
   btn:         { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
-  userEmail:   { fontSize: 11, color: theme.textDim },
+  userHandle:  { fontSize: 12, color: theme.red, fontWeight: 700 },
   signOutBtn:  { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "5px 10px", fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
 };
 const na = {
