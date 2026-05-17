@@ -64,7 +64,7 @@ export default function ProfilePage() {
 
   const [mfaEnabled, setMfaEnabled] = useState(false);
   const [mfaLoading, setMfaLoading] = useState(true);
-  const [mfaModal, setMfaModal] = useState(null); // null | "enrolling"
+  const [mfaModal, setMfaModal] = useState(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -420,7 +420,7 @@ export default function ProfilePage() {
 }
 
 function EnrollMfaModal({ onClose, onComplete }) {
-  const [step, setStep] = useState("loading"); // loading | scan | error
+  const [step, setStep] = useState("loading");
   const [factorId, setFactorId] = useState(null);
   const [qrSvg, setQrSvg] = useState(null);
   const [secret, setSecret] = useState(null);
@@ -434,7 +434,6 @@ function EnrollMfaModal({ onClose, onComplete }) {
 
     const start = async () => {
       try {
-        // Clean up any leftover unverified factors from prior aborted attempts
         const { data: existing } = await supabase.auth.mfa.listFactors();
         const unverified = (existing?.totp || []).filter((f) => f.status === "unverified");
         for (const f of unverified) {
@@ -457,7 +456,6 @@ function EnrollMfaModal({ onClose, onComplete }) {
     };
     start();
 
-    // If user closes modal mid-flow without verifying, clean up the unverified factor
     return () => {
       mounted = false;
       if (createdFactorId) {
@@ -496,6 +494,8 @@ function EnrollMfaModal({ onClose, onComplete }) {
     }
   };
 
+  const sizedSvg = qrSvg ? qrSvg.replace(/<svg/, '<svg style="width:100%;height:auto;display:block;"') : "";
+
   return (
     <div style={m.backdrop} onClick={onClose}>
       <div style={m.modal} onClick={(e) => e.stopPropagation()}>
@@ -530,7 +530,9 @@ function EnrollMfaModal({ onClose, onComplete }) {
             </ol>
 
             {qrSvg && (
-              <div style={m.qrWrap} dangerouslySetInnerHTML={{ __html: qrSvg }} />
+              <div style={m.qrWrap}>
+                <div style={m.qrInner} dangerouslySetInnerHTML={{ __html: sizedSvg }} />
+              </div>
             )}
 
             {secret && (
@@ -652,8 +654,8 @@ const m = {
   body:         { fontSize: 14, color: "#aaa", lineHeight: 1.6, marginBottom: 16 },
   steps:        { paddingLeft: 20, marginBottom: 20 },
   step:         { fontSize: 13, color: "#aaa", lineHeight: 1.6, marginBottom: 6 },
- qrWrap:       { background: "#fff", padding: 16, borderRadius: 8, margin: "0 auto 20px", width: 220, textAlign: "center", display: "flex", justifyContent: "center", alignItems: "center" },
-qrWrapInner:  { width: "100%", height: "auto" },
+  qrWrap:       { background: "#fff", padding: 16, borderRadius: 8, margin: "0 auto 20px", width: 220, boxSizing: "border-box", display: "flex", justifyContent: "center", alignItems: "center" },
+  qrInner:      { width: "100%", lineHeight: 0 },
   manualWrap:   { marginBottom: 20 },
   manualToggle: { fontSize: 12, color: "#C0392B", cursor: "pointer", fontWeight: 600 },
   manualHelp:   { fontSize: 12, color: "#888", lineHeight: 1.6, marginTop: 8, marginBottom: 6 },
