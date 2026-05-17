@@ -53,7 +53,7 @@ export default function ProfilePage() {
   const [justSaved, setJustSaved] = useState(false);
   const [error, setError] = useState(null);
 
-  const [name, setName] = useState("");
+  const [handle, setHandle] = useState("");
   const [cvPath, setCvPath] = useState(null);
   const [categories, setCategories] = useState(EMPTY_CATEGORIES);
 
@@ -78,7 +78,7 @@ export default function ProfilePage() {
         .maybeSingle();
 
       if (profile) {
-        setName(profile.name || "");
+        setHandle(profile.name || "");
         setCvPath(profile.cv_path || null);
         setCategories({ ...EMPTY_CATEGORIES, ...(profile.profile_categories || {}) });
         setMode("edit");
@@ -140,7 +140,7 @@ export default function ProfilePage() {
         }
         return merged;
       });
-      setExtractionMsg("Got it! Take a look at the sections below — edit anything that needs adjusting.");
+      setExtractionMsg("Got it! Take a look at the sections below — edit anything that needs adjusting. You can delete the CV file itself anytime; we only needed it for the extraction.");
     } catch (err) {
       setUploadError(err.message || "Couldn't read your CV — but no worries, you can fill in the sections below yourself.");
     } finally {
@@ -160,8 +160,8 @@ export default function ProfilePage() {
 
   const handleSave = async () => {
     setError(null);
-    if (!name.trim()) {
-      setError("Please share your name — even just a first name is fine.");
+    if (!handle.trim()) {
+      setError("Please pick a handle — any name you'd like us to call you.");
       return;
     }
     setSaving(true);
@@ -171,7 +171,7 @@ export default function ProfilePage() {
         .upsert(
           {
             user_id: user.id,
-            name: name.trim(),
+            name: handle.trim(),
             cv_path: cvPath,
             profile_categories: categories,
           },
@@ -183,7 +183,7 @@ export default function ProfilePage() {
 
       let dest = next;
       if (mode === "create" && next === "/") {
-        dest = `/?welcome=true&name=${encodeURIComponent(name.trim())}`;
+        dest = `/?welcome=true&name=${encodeURIComponent(handle.trim())}`;
       }
 
       setTimeout(() => router.push(dest), 900);
@@ -234,12 +234,18 @@ export default function ProfilePage() {
         </div>
 
         <div style={s.section}>
-          <label style={s.label}>Your name</label>
+          <label style={s.label}>Your handle</label>
+          <p style={s.helper}>
+            What you'd like us to call you. Could be your real first name, an inventor nickname,
+            a gamer handle — whatever you'd like to see across the apps. Your legal name is only
+            needed at the moment you file a patent, and only if you want our help merging it into
+            your final document.
+          </p>
           <input
             style={s.input}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="What should we call you?"
+            value={handle}
+            onChange={(e) => setHandle(e.target.value)}
+            placeholder="e.g. Jeffery, trailbuilder, gardenmom1972..."
           />
         </div>
 
@@ -247,7 +253,8 @@ export default function ProfilePage() {
           <label style={s.label}>Got a CV or resume?</label>
           <p style={s.helper}>
             Upload it as a PDF and we'll do the heavy lifting — work, education, skills, and hobbies
-            will be filled in below. You can edit anything afterward.
+            will be filled in below. You can delete the CV file itself once the extraction is done;
+            we only need it briefly.
           </p>
 
           <input
@@ -275,7 +282,7 @@ export default function ProfilePage() {
               <span style={s.cvCheck}>✓</span>
               <span style={s.cvText}>CV uploaded</span>
               <button onClick={handleFilePick} style={s.linkBtn}>Replace</button>
-              <button onClick={handleRemoveCv} style={s.linkBtn}>Remove</button>
+              <button onClick={handleRemoveCv} style={s.linkBtn}>Delete file</button>
             </div>
           )}
 
@@ -335,7 +342,8 @@ export default function ProfilePage() {
         </div>
 
         <p style={s.privacy}>
-          Your profile is private and only visible to you. HAIIC does not sell or share your data.
+          Your profile is private and only visible to you. HAIIC does not sell your data
+          or share it with anyone else.
         </p>
       </div>
     </div>
