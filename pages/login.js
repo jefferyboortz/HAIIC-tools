@@ -168,10 +168,10 @@ export default function LoginPage() {
             </div>
 
             <label style={s.label}>Email</label>
-            <input style={s.input} type="email" value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSubmit()} placeholder="your@email.com" autoComplete="email" />
+            <input style={s.input} type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" autoComplete="email" />
 
             <label style={s.label}>Password</label>
-            <input style={s.input} type="password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSubmit()} placeholder={mode === "signup" ? "Choose a password (6+ characters)" : "Your password"} autoComplete={mode === "signup" ? "new-password" : "current-password"} />
+            <input style={s.input} type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder={mode === "signup" ? "Choose a password (6+ characters)" : "Your password"} autoComplete={mode === "signup" ? "new-password" : "current-password"} />
 
             <label style={s.keepSignedInRow}>
               <input
