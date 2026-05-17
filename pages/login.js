@@ -1,14 +1,7 @@
 import { useState } from "react";
 import { useRouter } from "next/router";
 import Link from "next/link";
-import { createClient } from "@supabase/supabase-js";
-import theme from "../components/theme";
-
-const supabase = createClient(
-  "https://quruzppflgdbddxyylxu.supabase.co",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cnV6cHBmbGdkYmRkeHl5bHh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2MDQ1NTEsImV4cCI6MjA4OTE4MDU1MX0.y6acgCo6EZZiEDIJHSx6J3T60L1P6M_DH3vTIulFvJ0",
-  { auth: { storageKey: "haiic-auth", persistSession: true, autoRefreshToken: true } }
-);
+import supabase from "../lib/supabaseClient";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -20,6 +13,7 @@ export default function LoginPage() {
   const [mode,     setMode]     = useState("login");
   const [email,    setEmail]    = useState("");
   const [password, setPassword] = useState("");
+  const [keepSignedIn, setKeepSignedIn] = useState(false);
   const [error,    setError]    = useState(null);
   const [loading,  setLoading]  = useState(false);
   const [success,  setSuccess]  = useState(null);
@@ -28,6 +22,19 @@ export default function LoginPage() {
   const [mfaFactorId, setMfaFactorId] = useState(null);
   const [mfaCode, setMfaCode] = useState("");
   const [mfaVerifying, setMfaVerifying] = useState(false);
+
+  // Set the persistence flag in localStorage BEFORE sign-in.
+  // The Supabase client reads this on creation to decide where to store
+  // the auth session (localStorage = persists, sessionStorage = tab-only).
+  const writePersistFlag = (keep) => {
+    try {
+      if (keep) {
+        localStorage.setItem("haiic-keep-signed-in", "true");
+      } else {
+        localStorage.removeItem("haiic-keep-signed-in");
+      }
+    } catch {}
+  };
 
   const proceedAfterSignIn = async () => {
     try {
@@ -60,12 +67,16 @@ export default function LoginPage() {
     setLoading(true);
     try {
       if (mode === "signup") {
+        // Set persistence flag before any auth happens
+        writePersistFlag(keepSignedIn);
         const { error } = await supabase.auth.signUp({ email: email.trim(), password });
         if (error) throw error;
         setSuccess("Check your email — we sent you a link to confirm your account. Once you click it, come back here and sign in.");
         setMode("login");
         setLoading(false);
       } else {
+        // Set persistence flag before sign-in so the session lands in the right storage
+        writePersistFlag(keepSignedIn);
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
         if (error) throw error;
         await proceedAfterSignIn();
@@ -162,6 +173,21 @@ export default function LoginPage() {
             <label style={s.label}>Password</label>
             <input style={s.input} type="password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSubmit()} placeholder={mode === "signup" ? "Choose a password (6+ characters)" : "Your password"} autoComplete={mode === "signup" ? "new-password" : "current-password"} />
 
+            <label style={s.keepSignedInRow}>
+              <input
+                type="checkbox"
+                checked={keepSignedIn}
+                onChange={(e) => setKeepSignedIn(e.target.checked)}
+                style={s.checkbox}
+              />
+              <span style={s.keepSignedInText}>
+                Keep me signed in on this device
+              </span>
+            </label>
+            <p style={s.keepSignedInHelper}>
+              Leave unchecked on a shared or public computer. We'll sign you out when you close the browser.
+            </p>
+
             {error   && <div style={s.error}>{error}</div>}
             {success && <div style={s.successMsg}>{success}</div>}
 
@@ -196,6 +222,10 @@ const s = {
   toggleActive:{ background: "#C0392B", color: "#fff" },
   label:       { display: "block", fontSize: 13, fontWeight: 600, color: "#888", marginBottom: 6, marginTop: 16 },
   input:       { width: "100%", background: "#1a1a1a", border: "1px solid #333", borderRadius: 8, color: "#f0f0f0", padding: "10px 14px", fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box" },
+  keepSignedInRow:    { display: "flex", alignItems: "center", gap: 10, marginTop: 18, cursor: "pointer", userSelect: "none" },
+  checkbox:           { accentColor: "#C0392B", width: 16, height: 16, cursor: "pointer" },
+  keepSignedInText:   { fontSize: 14, color: "#ddd", fontWeight: 600 },
+  keepSignedInHelper: { fontSize: 11, color: "#888", marginTop: 6, marginBottom: 0, lineHeight: 1.5, paddingLeft: 26 },
   error:       { background: "#3d1515", border: "1px solid #7d2020", borderRadius: 7, color: "#ff8080", padding: "10px 14px", fontSize: 13, marginTop: 12, lineHeight: 1.5 },
   successMsg:  { background: "#153d1a", border: "1px solid #2d7a3a", borderRadius: 7, color: "#80ff99", padding: "10px 14px", fontSize: 13, marginTop: 12, lineHeight: 1.5 },
   submitBtn:   { width: "100%", background: "#C0392B", border: "none", borderRadius: 8, color: "#fff", padding: "13px 0", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", marginTop: 20 },
