@@ -17,14 +17,20 @@ const INTENT_OPTIONS = [
   { value: "curious", label: "I'm just curious — let's see what comes up" },
 ];
 
+const PHASE_DIVIDER_LABELS = {
+  problem: "Defining the problem",
+  explore: "Exploring root causes",
+  ideate:  "Brainstorming solutions",
+  refine:  "Refining the strongest idea",
+  brief:   "Synthesizing the Invention Brief",
+};
+
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SYSTEM PROMPT
-// One unified prompt. The AI is phase-aware but the user never sees phase walls.
-// AI emits [CAPTURE_PROPOSED]…[/CAPTURE_PROPOSED] markers at natural moments.
+// SYSTEM PROMPT (phase-aware, defensive)
 // ─────────────────────────────────────────────────────────────────────────────
 function buildSystemPrompt({ handle, profileSummary, intent, currentPhase, captures }) {
   const intentLine =
@@ -34,7 +40,6 @@ function buildSystemPrompt({ handle, profileSummary, intent, currentPhase, captu
       ? "They have a problem they want to solve but no solution yet."
       : "They're exploring — no fixed idea or problem yet.";
 
-  // Determine which capture types already exist — those phases are COMPLETE.
   const existingTypes = new Set((captures || []).map((c) => c.type));
   const completedPhases = ["problem", "explore", "ideate", "refine"].filter((p) => existingTypes.has(p));
   const completedLine =
@@ -42,7 +47,6 @@ function buildSystemPrompt({ handle, profileSummary, intent, currentPhase, captu
       ? "None yet."
       : completedPhases.map((p) => p.toUpperCase()).join(", ");
 
-  // What phase comes next based on current
   const phaseAfter = {
     intake:  "problem",
     problem: "explore",
@@ -52,7 +56,6 @@ function buildSystemPrompt({ handle, profileSummary, intent, currentPhase, captu
     brief:   "brief",
   };
 
-  // Phase-specific behavior instructions
   const phaseGuidance = {
     problem: `YOU ARE IN THE PROBLEM PHASE.
 Your job: help the inventor clearly articulate what's broken, slow, or frustrating. Ask about who's affected, when it happens, what makes it worse.
@@ -167,6 +170,54 @@ Continue the conversation now, working in the ${currentPhase.toUpperCase()} phas
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PHASE TRANSITION OPENER PROMPT
+// Generates the AI's first message in a new phase after a capture is approved.
+// ─────────────────────────────────────────────────────────────────────────────
+function buildTransitionPrompt({ handle, fromPhase, toPhase, capturedTitle, capturedContent, captures }) {
+  const opener = {
+    explore: `The problem has just been captured. Now you're moving into the EXPLORE phase — root causes, failed prior attempts, hidden assumptions, ripple effects. Write a short message (2 short paragraphs max) that:
+1. Briefly acknowledges what was just captured.
+2. Names the shift: "Now let's dig into why this happens" or similar.
+3. Asks one good opening question about root causes — what's been tried before, what assumptions everyone makes, who else is affected that isn't obvious.
+
+Do NOT propose a capture in this message. Do NOT include the [CAPTURE_PROPOSED] marker.`,
+
+    ideate: `The exploration has just been captured. Now you're moving into the IDEATE phase — brainstorming solutions. Write a short message (2-3 short paragraphs max) that:
+1. Briefly acknowledges what was just captured.
+2. Names the shift: "Now we're going to brainstorm some solutions" or similar.
+3. Proposes 3-4 candidate solution directions across a range — practical, ambitious, cross-industry/analogical, and one moonshot. Make them concrete, not abstract.
+4. Asks which one resonates.
+
+Do NOT propose a capture in this message. Do NOT include the [CAPTURE_PROPOSED] marker.`,
+
+    refine: `The brainstorming has just been captured. Now you're moving into the REFINE phase — picking the strongest idea and making it concrete. Write a short message (2 short paragraphs max) that:
+1. Briefly acknowledges what was just captured.
+2. Names the shift: "Now let's take the strongest of these and make it real" or similar.
+3. Asks the inventor which idea felt strongest and starts pushing for specifics — components, materials, mechanisms.
+
+Do NOT propose a capture in this message. Do NOT include the [CAPTURE_PROPOSED] marker.`,
+
+    brief: `The refined invention has just been captured. The inventor will see a "Generate Invention Brief" button next. Write a short message (1-2 short paragraphs) that:
+1. Acknowledges the refinement.
+2. Tells the inventor they can synthesize the full Invention Brief whenever they're ready, or keep refining if they want.
+
+Do NOT propose a capture in this message.`,
+  };
+
+  const instruction = opener[toPhase] || `Acknowledge the capture briefly and continue the conversation in the ${toPhase} phase.`;
+
+  return `You are continuing an innovation coaching conversation with ${handle}. A capture was just approved and the phase has advanced from ${fromPhase} to ${toPhase}.
+
+Just-captured artifact:
+TITLE: ${capturedTitle}
+CONTENT: ${capturedContent}
+
+${instruction}
+
+Tone: warm, direct, never condescending. Use the inventor's handle naturally if it fits.`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CAPTURE MARKER PARSING
 // ─────────────────────────────────────────────────────────────────────────────
 function parseCaptureMarker(text) {
@@ -260,7 +311,7 @@ async function exportToDocx(project, handle) {
   if (Array.isArray(data.messages) && data.messages.length > 0) {
     children.push(h2("Full Conversation"), spacer(60));
     for (const msg of data.messages) {
-      if (!msg.content) continue;
+      if (!msg.content || msg.role === "divider") continue;
       const role = msg.role === "assistant" ? "AI Coach" : "You";
       children.push(
         new Paragraph({
@@ -673,12 +724,17 @@ export default function BrainstormPage() {
         captures,
       });
 
+      // Strip divider messages from history before sending to API
+      const apiMessages = nextMessages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({ role: m.role, content: m.content }));
+
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           system,
-          messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
+          messages: apiMessages,
           max_tokens: 1200,
         }),
       });
@@ -697,8 +753,6 @@ export default function BrainstormPage() {
       const finalMessages = [...nextMessages, assistantMsg];
       setMessages(finalMessages);
 
-      // Guard: only honor proposals that match the current phase OR are 'insight'.
-      // This blocks stale/wrong-phase capture proposals from the AI.
       if (proposal) {
         const allowed = proposal.type === currentPhase || proposal.type === "insight";
         const alreadyExists = captures.some((c) => c.type === proposal.type) && proposal.type !== "insight";
@@ -720,7 +774,46 @@ export default function BrainstormPage() {
     }
   }, [messages, chatLoading, handle, profileSummary, intent, currentPhase, captures, intakeUpdates]);
 
-  const approveCapture = () => {
+  // Fires after capture approval to generate the AI's opening message for the new phase.
+  const generatePhaseOpener = async (fromPhase, toPhase, capturedTitle, capturedContent, currentMessages, currentCaptures) => {
+    if (!toPhase || toPhase === fromPhase || toPhase === "brief") return null;
+
+    try {
+      const transitionSystem = buildTransitionPrompt({
+        handle,
+        fromPhase,
+        toPhase,
+        capturedTitle,
+        capturedContent,
+        captures: currentCaptures,
+      });
+
+      // Pass the last few real messages for context (skip dividers)
+      const recent = currentMessages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .slice(-6)
+        .map((m) => ({ role: m.role, content: m.content }));
+
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system: transitionSystem,
+          messages: recent.length > 0 ? recent : [{ role: "user", content: "Please open the next phase." }],
+          max_tokens: 600,
+        }),
+      });
+
+      const result = await res.json();
+      const text = result.content?.map((i) => (i.type === "text" ? i.text : "")).join("\n") || "";
+      // Strip any stray markers just in case
+      return text.replace(/\[CAPTURE_PROPOSED\][\s\S]*?\[\/CAPTURE_PROPOSED\]/g, "").trim();
+    } catch {
+      return null;
+    }
+  };
+
+  const approveCapture = async () => {
     if (!pendingCapture) return;
     const cap = {
       id: genId(),
@@ -731,12 +824,38 @@ export default function BrainstormPage() {
       createdAt: new Date().toISOString(),
       sourceMsgIdx: pendingCapture.afterMsgIdx,
     };
-    setCaptures((prev) => [...prev, cap]);
 
+    const nextCaptures = [...captures, cap];
+    setCaptures(nextCaptures);
+
+    const fromPhase = currentPhase;
     const nextPhase = advancePhase(currentPhase, cap.type);
-    if (nextPhase) setCurrentPhase(nextPhase);
+    const phaseChanged = nextPhase && nextPhase !== currentPhase;
 
+    if (phaseChanged) setCurrentPhase(nextPhase);
     setPendingCapture(null);
+
+    // If the phase changed, append a divider + a transition opener message
+    if (phaseChanged) {
+      const dividerMsg = {
+        role: "divider",
+        content: `${capLabel(cap.type)} captured. Now ${PHASE_DIVIDER_LABELS[nextPhase] || nextPhase}.`,
+        timestamp: new Date().toISOString(),
+      };
+      // Insert divider immediately so the user gets a visual signal before the API call returns
+      setMessages((prev) => [...prev, dividerMsg]);
+
+      setChatLoading(true);
+      const opener = await generatePhaseOpener(fromPhase, nextPhase, cap.title, cap.content, messages, nextCaptures);
+      if (opener) {
+        setMessages((prev) => [...prev, {
+          role: "assistant",
+          content: opener,
+          timestamp: new Date().toISOString(),
+        }]);
+      }
+      setChatLoading(false);
+    }
   };
 
   const dismissCapture = () => setPendingCapture(null);
@@ -745,7 +864,9 @@ export default function BrainstormPage() {
     setChatLoading(true);
     try {
       const captureText = captures.map((c) => `${c.type.toUpperCase()} — ${c.title}\n${c.content}`).join("\n\n");
-      const convoText = messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
+      const convoText = messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
 
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -925,22 +1046,57 @@ This Invention Brief is ready to be taken into Patent Forge.`,
   const showIntake = currentPhase === "intake";
   const canSynthesize = captures.some((c) => c.type === "refine") && !inventionBrief && currentPhase !== "brief";
 
+  // Build the messages array we'll feed to ChatThread.
+  // Divider messages get rendered as inline action nodes attached to the preceding message.
+  const displayMessages = [];
   const inlineActions = [];
+
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m.role === "divider") {
+      // Attach divider to the previous message in displayMessages
+      const attachIdx = displayMessages.length - 1;
+      if (attachIdx >= 0) {
+        inlineActions.push({
+          afterMessageIdx: attachIdx,
+          node: (
+            <div key={`div-${i}`} style={dv.wrap}>
+              <span style={dv.line} />
+              <span style={dv.text}>{m.content}</span>
+              <span style={dv.line} />
+            </div>
+          ),
+        });
+      }
+    } else {
+      displayMessages.push(m);
+    }
+  }
+
+  // Pending-capture card attaches to the assistant message that proposed it.
+  // We need to map the index in `messages` to the index in `displayMessages`.
   if (pendingCapture) {
-    inlineActions.push({
-      afterMessageIdx: pendingCapture.afterMsgIdx,
-      node: (
-        <div style={cc.card}>
-          <div style={cc.cardHead}>Capture this as your {labelForCaptureType(pendingCapture.type)}?</div>
-          <div style={cc.cardTitle}>{pendingCapture.title}</div>
-          <div style={cc.cardContent}>{pendingCapture.content}</div>
-          <div style={cc.cardButtons}>
-            <button onClick={approveCapture} style={cc.approveBtn}>Yes, save it</button>
-            <button onClick={dismissCapture} style={cc.dismissBtn}>Not yet</button>
+    // Count how many non-divider messages exist up to and including pendingCapture.afterMsgIdx
+    let displayIdx = -1;
+    for (let i = 0; i <= pendingCapture.afterMsgIdx && i < messages.length; i++) {
+      if (messages[i].role !== "divider") displayIdx++;
+    }
+    if (displayIdx >= 0) {
+      inlineActions.push({
+        afterMessageIdx: displayIdx,
+        node: (
+          <div style={cc.card}>
+            <div style={cc.cardHead}>Capture this as your {labelForCaptureType(pendingCapture.type)}?</div>
+            <div style={cc.cardTitle}>{pendingCapture.title}</div>
+            <div style={cc.cardContent}>{pendingCapture.content}</div>
+            <div style={cc.cardButtons}>
+              <button onClick={approveCapture} style={cc.approveBtn}>Yes, save it</button>
+              <button onClick={dismissCapture} style={cc.dismissBtn}>Not yet</button>
+            </div>
           </div>
-        </div>
-      ),
-    });
+        ),
+      });
+    }
   }
 
   return (
@@ -980,7 +1136,7 @@ This Invention Brief is ready to be taken into Patent Forge.`,
           ) : (
             <>
               <ChatThread
-                messages={messages}
+                messages={displayMessages}
                 loading={chatLoading}
                 onSend={sendMessage}
                 placeholder="Type a message…"
@@ -1033,6 +1189,10 @@ function labelForCaptureType(type) {
   return map[type] || "Capture";
 }
 
+function capLabel(type) {
+  return labelForCaptureType(type);
+}
+
 function buildProfileSummary(categories) {
   if (!categories) return "";
   const labels = {
@@ -1061,8 +1221,8 @@ const pg = {
   backBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   userHandle: { fontSize: 13, color: theme.red, fontWeight: 700 },
   signOutBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "5px 10px", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
-  twoCol: { display: "flex", gap: 0, minHeight: "60vh", border: `1px solid ${theme.border}`, borderRadius: 12, overflow: "hidden", background: "#101010" },
-  leftCol: { flex: 1, padding: "0 18px", display: "flex", flexDirection: "column", minWidth: 0 },
+  twoCol: { display: "flex", gap: 0, height: "72vh", border: `1px solid ${theme.border}`, borderRadius: 12, overflow: "hidden", background: "#101010" },
+  leftCol: { flex: 1, padding: "0 18px", display: "flex", flexDirection: "column", minWidth: 0, overflowY: "auto" },
   synthBar: { borderTop: `1px solid ${theme.border}`, padding: "12px 0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" },
   synthText: { fontSize: 13, color: theme.textMuted, margin: 0 },
   synthBtn: { background: theme.red, border: "none", borderRadius: 7, color: "#fff", padding: "9px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
@@ -1076,6 +1236,12 @@ const cc = {
   cardButtons: { display: "flex", gap: 8 },
   approveBtn: { background: theme.red, border: "none", borderRadius: 6, color: "#fff", padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   dismissBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "7px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+};
+
+const dv = {
+  wrap: { display: "flex", alignItems: "center", gap: 12, margin: "14px 0", marginLeft: -38, paddingRight: 0 },
+  line: { flex: 1, height: 1, background: theme.red, opacity: 0.3 },
+  text: { fontSize: 11, fontWeight: 700, color: theme.red, textTransform: "uppercase", letterSpacing: 2, whiteSpace: "nowrap" },
 };
 
 const ip = {
