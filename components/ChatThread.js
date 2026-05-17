@@ -1,13 +1,20 @@
 import { useState, useRef, useEffect } from "react";
 import theme from "./theme";
 
-export default function ChatThread({ messages, loading, onSend, placeholder, emptyState }) {
+export default function ChatThread({
+  messages,
+  loading,
+  onSend,
+  placeholder,
+  emptyState,
+  inlineActions,
+}) {
   const [input, setInput] = useState("");
   const scrollRef = useRef(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, loading]);
+  }, [messages, loading, inlineActions]);
 
   const handleSend = () => {
     if (!input.trim() || loading) return;
@@ -15,20 +22,36 @@ export default function ChatThread({ messages, loading, onSend, placeholder, emp
     setInput("");
   };
 
+  // inlineActions is optional: an array of { afterMessageIdx, node }
+  // The node is rendered directly below the message at that index.
+  const actionsByIdx = {};
+  if (Array.isArray(inlineActions)) {
+    for (const action of inlineActions) {
+      if (typeof action?.afterMessageIdx === "number") {
+        actionsByIdx[action.afterMessageIdx] = action.node;
+      }
+    }
+  }
+
   return (
     <div style={styles.container}>
       <div ref={scrollRef} style={styles.messages}>
         {messages.length === 0 && emptyState && <div style={styles.empty}>{emptyState}</div>}
         {messages.map((msg, i) => (
-          <div key={i} style={msg.role === "user" ? styles.userRow : styles.assistantRow}>
-            {msg.role === "assistant" && <div style={styles.avatar}>◆</div>}
-            <div style={msg.role === "user" ? styles.userBubble : styles.assistantBubble}>
-              {msg.content.split("\n").map((line, j) => (
-                <p key={j} style={{ margin: line ? "0 0 8px" : "0", minHeight: line ? "auto" : 8 }}>
-                  {line}
-                </p>
-              ))}
+          <div key={i}>
+            <div style={msg.role === "user" ? styles.userRow : styles.assistantRow}>
+              {msg.role === "assistant" && <div style={styles.avatar}>◆</div>}
+              <div style={msg.role === "user" ? styles.userBubble : styles.assistantBubble}>
+                {msg.content.split("\n").map((line, j) => (
+                  <p key={j} style={{ margin: line ? "0 0 8px" : "0", minHeight: line ? "auto" : 8 }}>
+                    {line}
+                  </p>
+                ))}
+              </div>
             </div>
+            {actionsByIdx[i] && (
+              <div style={styles.inlineActionWrap}>{actionsByIdx[i]}</div>
+            )}
           </div>
         ))}
         {loading && (
@@ -79,7 +102,6 @@ const styles = {
     flexDirection: "column",
     gap: 16,
     minHeight: 200,
-    maxHeight: 400,
   },
   empty: { color: theme.textDim, fontSize: 14, textAlign: "center", padding: 40 },
   userRow: { display: "flex", justifyContent: "flex-end" },
@@ -116,6 +138,7 @@ const styles = {
     fontSize: 14,
     lineHeight: 1.6,
   },
+  inlineActionWrap: { marginTop: 10, marginLeft: 38 },
   dots: { color: theme.textDim, animation: "pulse 1s infinite" },
   inputArea: { display: "flex", gap: 8, padding: "12px 0" },
   input: {
