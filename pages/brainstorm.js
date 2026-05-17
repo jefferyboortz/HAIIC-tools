@@ -1,16 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/router";
-import { createClient } from "@supabase/supabase-js";
+import supabase from "../lib/supabaseClient";
 import Layout from "../components/Layout";
 import ChatThread from "../components/ChatThread";
 import useChat from "../components/useChat";
 import theme from "../components/theme";
-
-const supabase = createClient(
-  "https://quruzppflgdbddxyylxu.supabase.co",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cnV6cHBmbGdkYmRkeHl5bHh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2MDQ1NTEsImV4cCI6MjA4OTE4MDU1MX0.y6acgCo6EZZiEDIJHSx6J3T60L1P6M_DH3vTIulFvJ0",
-  { auth: { storageKey: "haiic-auth", persistSession: true, autoRefreshToken: true } }
-);
 
 const PHASES = [
   { id: "welcome",  label: "Welcome",         icon: "💡" },
