@@ -1221,7 +1221,7 @@ const pg = {
   backBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   userHandle: { fontSize: 13, color: theme.red, fontWeight: 700 },
   signOutBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "5px 10px", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
-  twoCol: { display: "flex", gap: 0, height: "72vh", border: `1px solid ${theme.border}`, borderRadius: 12, overflow: "hidden", background: "#101010" },
+  twoCol: { display: "flex", gap: 0, height: "calc(100vh - 220px)", maxHeight: "calc(100vh - 220px)", border: `1px solid ${theme.border}`, borderRadius: 12, overflow: "hidden", background: "#101010" },
   leftCol: { flex: 1, padding: "0 18px", display: "flex", flexDirection: "column", minWidth: 0, overflowY: "auto" },
   synthBar: { borderTop: `1px solid ${theme.border}`, padding: "12px 0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" },
   synthText: { fontSize: 13, color: theme.textMuted, margin: 0 },
