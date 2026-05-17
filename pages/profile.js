@@ -220,9 +220,9 @@ export default function ProfilePage() {
     try {
       const { data, error: listErr } = await supabase.auth.mfa.listFactors();
       if (listErr) throw listErr;
-      const verified = (data?.totp || []).find((f) => f.status === "verified");
-      if (verified) {
-        await supabase.auth.mfa.unenroll({ factorId: verified.id });
+      const allFactors = data?.totp || [];
+      for (const f of allFactors) {
+        try { await supabase.auth.mfa.unenroll({ factorId: f.id }); } catch {}
       }
       setMfaEnabled(false);
     } catch (err) {
@@ -422,7 +422,7 @@ export default function ProfilePage() {
 function EnrollMfaModal({ onClose, onComplete }) {
   const [step, setStep] = useState("loading");
   const [factorId, setFactorId] = useState(null);
-  const [qrSvg, setQrSvg] = useState(null);
+  const [qrUrl, setQrUrl] = useState(null);
   const [secret, setSecret] = useState(null);
   const [code, setCode] = useState("");
   const [verifying, setVerifying] = useState(false);
@@ -434,9 +434,10 @@ function EnrollMfaModal({ onClose, onComplete }) {
 
     const start = async () => {
       try {
+        // Aggressive cleanup: remove ALL existing TOTP factors before enrolling
         const { data: existing } = await supabase.auth.mfa.listFactors();
-        const unverified = (existing?.totp || []).filter((f) => f.status === "unverified");
-        for (const f of unverified) {
+        const allFactors = existing?.totp || [];
+        for (const f of allFactors) {
           try { await supabase.auth.mfa.unenroll({ factorId: f.id }); } catch {}
         }
 
@@ -445,7 +446,14 @@ function EnrollMfaModal({ onClose, onComplete }) {
         if (!mounted) return;
         createdFactorId = data.id;
         setFactorId(data.id);
-        setQrSvg(data.totp?.qr_code || null);
+
+        // Use the otpauth:// URI to generate a clean PNG via qrserver.com
+        // Supabase returns this in data.totp.uri
+        const uri = data.totp?.uri;
+        if (uri) {
+          const pngUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(uri)}`;
+          setQrUrl(pngUrl);
+        }
         setSecret(data.totp?.secret || null);
         setStep("scan");
       } catch (err) {
@@ -494,8 +502,6 @@ function EnrollMfaModal({ onClose, onComplete }) {
     }
   };
 
-  const sizedSvg = qrSvg ? qrSvg.replace(/<svg/, '<svg style="width:100%;height:auto;display:block;"') : "";
-
   return (
     <div style={m.backdrop} onClick={onClose}>
       <div style={m.modal} onClick={(e) => e.stopPropagation()}>
@@ -529,9 +535,9 @@ function EnrollMfaModal({ onClose, onComplete }) {
               <li style={m.step}>Type the six-digit code your app shows you, then click Verify.</li>
             </ol>
 
-            {qrSvg && (
+            {qrUrl && (
               <div style={m.qrWrap}>
-                <div style={m.qrInner} dangerouslySetInnerHTML={{ __html: sizedSvg }} />
+                <img src={qrUrl} alt="Two-factor authentication QR code" style={m.qrImg} />
               </div>
             )}
 
@@ -654,8 +660,8 @@ const m = {
   body:         { fontSize: 14, color: "#aaa", lineHeight: 1.6, marginBottom: 16 },
   steps:        { paddingLeft: 20, marginBottom: 20 },
   step:         { fontSize: 13, color: "#aaa", lineHeight: 1.6, marginBottom: 6 },
-  qrWrap:       { background: "#fff", padding: 16, borderRadius: 8, margin: "0 auto 20px", width: 220, boxSizing: "border-box", display: "flex", justifyContent: "center", alignItems: "center" },
-  qrInner:      { width: "100%", lineHeight: 0 },
+  qrWrap:       { background: "#fff", padding: 16, borderRadius: 8, margin: "0 auto 20px", width: 272, boxSizing: "border-box", display: "flex", justifyContent: "center", alignItems: "center" },
+  qrImg:        { width: 240, height: 240, display: "block" },
   manualWrap:   { marginBottom: 20 },
   manualToggle: { fontSize: 12, color: "#C0392B", cursor: "pointer", fontWeight: 600 },
   manualHelp:   { fontSize: 12, color: "#888", lineHeight: 1.6, marginTop: 8, marginBottom: 6 },
