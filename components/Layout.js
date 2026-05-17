@@ -33,9 +33,7 @@ export default function Layout({ children, title, logoSrc }) {
         .maybeSingle();
       if (!mounted) return;
       setAuthState("signedIn");
-      const fullName = profile?.name || "";
-      const firstName = fullName.trim().split(/\s+/)[0] || "Profile";
-      setDisplayName(firstName);
+      setDisplayName((profile?.name || "").trim() || "Profile");
     };
 
     supabase.auth.getSession().then(({ data: { session } }) => loadProfile(session));
