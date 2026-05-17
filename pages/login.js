@@ -6,7 +6,8 @@ import theme from "../components/theme";
 
 const supabase = createClient(
   "https://quruzppflgdbddxyylxu.supabase.co",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cnV6cHBmbGdkYmRkeHl5bHh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2MDQ1NTEsImV4cCI6MjA4OTE4MDU1MX0.y6acgCo6EZZiEDIJHSx6J3T60L1P6M_DH3vTIulFvJ0"
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cnV6cHBmbGdkYmRkeHl5bHh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2MDQ1NTEsImV4cCI6MjA4OTE4MDU1MX0.y6acgCo6EZZiEDIJHSx6J3T60L1P6M_DH3vTIulFvJ0",
+  { auth: { storageKey: "haiic-auth", persistSession: true, autoRefreshToken: true } }
 );
 
 export default function LoginPage() {
@@ -23,19 +24,16 @@ export default function LoginPage() {
   const [loading,  setLoading]  = useState(false);
   const [success,  setSuccess]  = useState(null);
 
-  // MFA challenge state
   const [mfaRequired, setMfaRequired] = useState(false);
   const [mfaFactorId, setMfaFactorId] = useState(null);
   const [mfaCode, setMfaCode] = useState("");
   const [mfaVerifying, setMfaVerifying] = useState(false);
 
   const proceedAfterSignIn = async () => {
-    // Check if the user has a verified TOTP factor; if so, prompt for MFA
     try {
       const { data, error: aalErr } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
       if (aalErr) throw aalErr;
 
-      // currentLevel: "aal1" or "aal2"; nextLevel: what user needs for full access
       if (data?.nextLevel === "aal2" && data?.currentLevel !== "aal2") {
         const { data: factors, error: fErr } = await supabase.auth.mfa.listFactors();
         if (fErr) throw fErr;
@@ -47,7 +45,6 @@ export default function LoginPage() {
           return;
         }
       }
-      // No MFA needed — proceed to destination
       router.push(router.query.next || "/");
     } catch (err) {
       setError(err.message || "Sign-in worked, but we hit a snag confirming your account. Please try again.");
@@ -65,8 +62,6 @@ export default function LoginPage() {
       if (mode === "signup") {
         const { error } = await supabase.auth.signUp({ email: email.trim(), password });
         if (error) throw error;
-        // With email confirmation enabled, signUp does NOT create a session;
-        // the user has to click the link in their email first.
         setSuccess("Check your email — we sent you a link to confirm your account. Once you click it, come back here and sign in.");
         setMode("login");
         setLoading(false);
@@ -106,7 +101,6 @@ export default function LoginPage() {
   };
 
   const handleMfaCancel = async () => {
-    // User backed out of MFA — sign them out so we don't leave a half-authenticated session
     try { await supabase.auth.signOut(); } catch {}
     setMfaRequired(false);
     setMfaFactorId(null);
