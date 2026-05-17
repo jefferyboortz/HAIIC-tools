@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useRouter } from "next/router";
+import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 import theme from "../components/theme";
 
@@ -74,6 +75,13 @@ export default function LoginPage() {
           {loading ? "Please wait…" : mode === "login" ? "Sign In →" : "Create Account →"}
         </button>
 
+        {mode === "signup" && (
+          <p style={s.consent}>
+            By creating an account, you agree to our{" "}
+            <Link href="/privacy" style={s.consentLink}>Privacy Policy</Link>.
+          </p>
+        )}
+
         <p style={s.privacy}>Your projects are private and only visible to you. HAIIC does not sell or share your data.</p>
       </div>
     </div>
@@ -95,5 +103,7 @@ const s = {
   error:       { background: "#3d1515", border: "1px solid #7d2020", borderRadius: 7, color: "#ff8080", padding: "10px 14px", fontSize: 13, marginTop: 12, lineHeight: 1.5 },
   successMsg:  { background: "#153d1a", border: "1px solid #2d7a3a", borderRadius: 7, color: "#80ff99", padding: "10px 14px", fontSize: 13, marginTop: 12 },
   submitBtn:   { width: "100%", background: "#C0392B", border: "none", borderRadius: 8, color: "#fff", padding: "13px 0", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", marginTop: 20 },
+  consent:     { fontSize: 12, color: "#888", textAlign: "center", marginTop: 12, lineHeight: 1.5 },
+  consentLink: { color: "#C0392B", textDecoration: "underline" },
   privacy:     { fontSize: 11, color: "#555", textAlign: "center", marginTop: 16, lineHeight: 1.5 },
 };
