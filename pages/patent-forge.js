@@ -8,7 +8,8 @@ import theme from "../components/theme";
 
 const supabase = createClient(
   "https://quruzppflgdbddxyylxu.supabase.co",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cnV6cHBmbGdkYmRkeHl5bHh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2MDQ1NTEsImV4cCI6MjA4OTE4MDU1MX0.y6acgCo6EZZiEDIJHSx6J3T60L1P6M_DH3vTIulFvJ0"
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cnV6cHBmbGdkYmRkeHl5bHh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2MDQ1NTEsImV4cCI6MjA4OTE4MDU1MX0.y6acgCo6EZZiEDIJHSx6J3T60L1P6M_DH3vTIulFvJ0",
+  { auth: { storageKey: "haiic-auth", persistSession: true, autoRefreshToken: true } }
 );
 
 const SECTIONS = [
@@ -354,6 +355,17 @@ const tb = {
   btn:         { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   userHandle:  { fontSize: 12, color: theme.red, fontWeight: 700 },
   signOutBtn:  { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "5px 10px", fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+};
+const hf = {
+  banner: { background: theme.surface, border: `1px solid ${theme.red}`, borderRadius: 10, padding: "14px 18px", marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" },
+  bannerLeft: { flex: 1, minWidth: 240 },
+  bannerTitle: { fontSize: 14, fontWeight: 700, color: theme.text, marginBottom: 4 },
+  bannerMeta: { fontSize: 12, color: theme.textMuted },
+  bannerRight: { display: "flex", gap: 8, alignItems: "center" },
+  continueBtn: { background: theme.red, border: "none", borderRadius: 7, color: "#fff", padding: "8px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  dismissBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 7, color: theme.textMuted, padding: "8px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  infoBar: { background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: theme.textMuted },
+  tag: { background: theme.red, color: "#fff", borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700, marginLeft: 8, verticalAlign: "middle" },
 };
 const na = {
   wrap:        { marginTop: 24, borderTop: `1px solid ${theme.border}`, paddingTop: 16 },
