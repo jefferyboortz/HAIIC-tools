@@ -12,7 +12,7 @@ const supabase = createClient(
 
 export default function Layout({ children, title, logoSrc }) {
   const router = useRouter();
-  const [authState, setAuthState] = useState("loading"); // loading | signedIn | signedOut
+  const [authState, setAuthState] = useState("loading");
   const [displayName, setDisplayName] = useState(null);
 
   useEffect(() => {
@@ -33,7 +33,6 @@ export default function Layout({ children, title, logoSrc }) {
         .maybeSingle();
       if (!mounted) return;
       setAuthState("signedIn");
-      // Prefer first name only for the nav — keep it short
       const fullName = profile?.name || "";
       const firstName = fullName.trim().split(/\s+/)[0] || "Profile";
       setDisplayName(firstName);
@@ -96,6 +95,8 @@ export default function Layout({ children, title, logoSrc }) {
         <footer style={styles.footer}>
           <p style={styles.footerText}>
             © 2026 Human-AI Innovation Commons · 501(c)(3) Nonprofit · Decatur, Georgia
+            <span style={styles.footerDivider}> · </span>
+            <Link href="/privacy" style={styles.footerLink}>Privacy</Link>
           </p>
         </footer>
       </div>
@@ -166,4 +167,6 @@ const styles = {
     textAlign: "center",
   },
   footerText: { color: theme.textDim, fontSize: 12 },
+  footerDivider: { color: theme.textDim },
+  footerLink: { color: theme.textMuted, textDecoration: "underline" },
 };
