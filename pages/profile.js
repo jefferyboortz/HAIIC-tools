@@ -1,12 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/router";
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  "https://quruzppflgdbddxyylxu.supabase.co",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cnV6cHBmbGdkYmRkeHl5bHh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2MDQ1NTEsImV4cCI6MjA4OTE4MDU1MX0.y6acgCo6EZZiEDIJHSx6J3T60L1P6M_DH3vTIulFvJ0",
-  { auth: { storageKey: "haiic-auth", persistSession: true, autoRefreshToken: true } }
-);
+import supabase from "../lib/supabaseClient";
 
 const MAX_CV_SIZE_MB = 5;
 const MAX_CV_SIZE_BYTES = MAX_CV_SIZE_MB * 1024 * 1024;
@@ -409,7 +403,6 @@ export default function ProfilePage() {
 
       {mfaModal === "enrolling" && (
         <EnrollMfaModal
-          supabase={supabase}
           onClose={() => setMfaModal(null)}
           onComplete={() => {
             setMfaModal(null);
@@ -421,7 +414,7 @@ export default function ProfilePage() {
   );
 }
 
-function EnrollMfaModal({ supabase, onClose, onComplete }) {
+function EnrollMfaModal({ onClose, onComplete }) {
   const [step, setStep] = useState("loading");
   const [factorId, setFactorId] = useState(null);
   const [qrUrl, setQrUrl] = useState(null);
