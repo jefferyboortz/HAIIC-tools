@@ -1,9 +1,8 @@
 import theme from "./theme";
 
 // Sidebar for the unified-chat Brainstorm architecture.
-// Renders the project's captured artifacts as cards in the order they were approved.
-// Push 1 keeps it simple: list of cards, each shows title + a short snippet.
-// Future pushes add: click-to-expand (center stage), spinoff pills, pending enrichments tab.
+// - Phase progress tally (six phases, current/done/upcoming)
+// - Captures list
 
 const PHASE_LABELS = {
   intake:   "Getting to know you",
@@ -14,6 +13,17 @@ const PHASE_LABELS = {
   brief:    "Invention Brief",
 };
 
+const PHASE_SHORT = {
+  intake:  "Intake",
+  problem: "Define problem",
+  explore: "Explore",
+  ideate:  "Brainstorm",
+  refine:  "Refine",
+  brief:   "Brief",
+};
+
+const PHASE_ORDER = ["intake", "problem", "explore", "ideate", "refine", "brief"];
+
 const CAPTURE_TYPE_LABELS = {
   problem:    "Problem Statement",
   explore:    "Root Causes",
@@ -21,6 +31,15 @@ const CAPTURE_TYPE_LABELS = {
   refine:     "Refined Invention",
   brief:      "Invention Brief",
   insight:    "Insight",
+};
+
+// Map a capture type to the phase it completes
+const CAPTURE_COMPLETES_PHASE = {
+  problem: "problem",
+  explore: "explore",
+  ideate:  "ideate",
+  refine:  "refine",
+  brief:   "brief",
 };
 
 export default function BrainstormSidebar({
@@ -31,6 +50,17 @@ export default function BrainstormSidebar({
   saving,
   justSaved,
 }) {
+  // Which phases have been completed (have a capture of that type)?
+  const completedPhases = new Set();
+  for (const cap of captures) {
+    const p = CAPTURE_COMPLETES_PHASE[cap.type];
+    if (p) completedPhases.add(p);
+  }
+  // Intake is "complete" as soon as we're past it
+  if (currentPhase !== "intake") completedPhases.add("intake");
+
+  const currentIdx = PHASE_ORDER.indexOf(currentPhase);
+
   return (
     <aside style={styles.sidebar}>
       <div style={styles.header}>
@@ -45,6 +75,41 @@ export default function BrainstormSidebar({
         <button onClick={onExport} style={styles.toolBtn}>
           ⬇ Export
         </button>
+      </div>
+
+      <div style={styles.progressSection}>
+        <p style={styles.sectionLabel}>PROGRESS</p>
+        <div style={styles.progressList}>
+          {PHASE_ORDER.map((phase, i) => {
+            const isCompleted = completedPhases.has(phase) && phase !== currentPhase;
+            const isCurrent = phase === currentPhase;
+            const isUpcoming = !isCompleted && !isCurrent;
+
+            let marker, markerStyle, labelStyle;
+            if (isCompleted) {
+              marker = "✓";
+              markerStyle = styles.markerDone;
+              labelStyle = styles.labelDone;
+            } else if (isCurrent) {
+              marker = "●";
+              markerStyle = styles.markerCurrent;
+              labelStyle = styles.labelCurrent;
+            } else {
+              marker = "○";
+              markerStyle = styles.markerUpcoming;
+              labelStyle = styles.labelUpcoming;
+            }
+
+            return (
+              <div key={phase} style={styles.progressRow}>
+                <span style={{ ...styles.marker, ...markerStyle }}>{marker}</span>
+                <span style={{ ...styles.progressLabel, ...labelStyle }}>
+                  {PHASE_SHORT[phase]}
+                </span>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       <div style={styles.capturesSection}>
@@ -88,6 +153,7 @@ const styles = {
     flexDirection: "column",
     gap: 18,
     overflowY: "auto",
+    height: "100%",
   },
   header: { paddingBottom: 12, borderBottom: `1px solid ${theme.border}` },
   headerLabel: {
@@ -117,6 +183,19 @@ const styles = {
     cursor: "pointer",
     fontFamily: "'DM Sans', sans-serif",
   },
+
+  progressSection: { display: "flex", flexDirection: "column", gap: 8 },
+  progressList: { display: "flex", flexDirection: "column", gap: 6 },
+  progressRow: { display: "flex", alignItems: "center", gap: 10 },
+  marker: { fontSize: 12, width: 16, textAlign: "center", flexShrink: 0 },
+  markerDone:     { color: "#80ff99" },
+  markerCurrent:  { color: theme.red },
+  markerUpcoming: { color: theme.textDim },
+  progressLabel: { fontSize: 12, fontFamily: "'DM Sans', sans-serif" },
+  labelDone:     { color: theme.textMuted, textDecoration: "line-through", textDecorationColor: theme.textDim },
+  labelCurrent:  { color: theme.text, fontWeight: 700 },
+  labelUpcoming: { color: theme.textDim },
+
   capturesSection: { display: "flex", flexDirection: "column", gap: 10 },
   sectionLabel: {
     fontSize: 10,
