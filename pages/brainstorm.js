@@ -29,84 +29,145 @@ function genId() {
 function buildSystemPrompt({ handle, profileSummary, intent, currentPhase, captures }) {
   const intentLine =
     intent === "idea"
-      ? "They already have an idea and want help developing it. Start by hearing the idea."
+      ? "They already have an idea and want help developing it."
       : intent === "problem"
-      ? "They have a problem they want to solve but no solution yet. Help them articulate the problem clearly first."
-      : "They're exploring — no fixed idea or problem yet. Help them discover what's worth working on.";
+      ? "They have a problem they want to solve but no solution yet."
+      : "They're exploring — no fixed idea or problem yet.";
+
+  // Determine which capture types already exist — those phases are COMPLETE.
+  const existingTypes = new Set((captures || []).map((c) => c.type));
+  const completedPhases = ["problem", "explore", "ideate", "refine"].filter((p) => existingTypes.has(p));
+  const completedLine =
+    completedPhases.length === 0
+      ? "None yet."
+      : completedPhases.map((p) => p.toUpperCase()).join(", ");
+
+  // What phase comes next based on current
+  const phaseAfter = {
+    intake:  "problem",
+    problem: "explore",
+    explore: "ideate",
+    ideate:  "refine",
+    refine:  "brief",
+    brief:   "brief",
+  };
+
+  // Phase-specific behavior instructions
+  const phaseGuidance = {
+    problem: `YOU ARE IN THE PROBLEM PHASE.
+Your job: help the inventor clearly articulate what's broken, slow, or frustrating. Ask about who's affected, when it happens, what makes it worse.
+PROPOSE A CAPTURE (type: problem) when the inventor has clearly described a problem worth solving — usually after 2-3 exchanges.
+After the user approves a problem capture, you will be moved to the explore phase automatically.`,
+
+    explore: `YOU ARE IN THE EXPLORE PHASE.
+The problem is already captured. Do NOT propose another problem capture under any circumstances.
+Your job now: dig into ROOT CAUSES. Ask about what's been tried before and why it failed, the hidden assumptions everyone makes about this problem, ripple effects (what other things go wrong because of this), and who else is affected that isn't obvious.
+PROPOSE A CAPTURE (type: explore) when you've surfaced 2-3 substantive root causes or failed prior attempts.
+After the user approves an explore capture, you will be moved to the ideate phase automatically.`,
+
+    ideate: `YOU ARE IN THE IDEATE PHASE.
+The problem and exploration are already captured. Do NOT propose another problem or explore capture under any circumstances.
+Your job now: BRAINSTORM SOLUTIONS. Propose 3-4 diverse solution directions across a range — practical, ambitious, cross-industry/analogical, and one moonshot. Ask which resonate and why.
+PROPOSE A CAPTURE (type: ideate) when 2-3 candidate solutions have been discussed substantively.
+After the user approves an ideate capture, you will be moved to the refine phase automatically.`,
+
+    refine: `YOU ARE IN THE REFINE PHASE.
+The problem, exploration, and ideation are already captured. Do NOT propose any of those capture types again under any circumstances.
+Your job now: help the inventor PICK THE STRONGEST IDEA and get specific about it. Push for concrete components, materials, mechanisms, dimensions, what makes it novel. The goal is enough specificity that someone in the field could reproduce it.
+PROPOSE A CAPTURE (type: refine) when the strongest idea has been picked AND made concrete with technical specifics.
+After the user approves a refine capture, an "Generate Invention Brief" button appears for them to synthesize the full brief.`,
+
+    brief: `THE BRIEF HAS BEEN SYNTHESIZED. Your job now is to answer any follow-up questions the inventor has about the brief or what comes next. Do not propose more captures.`,
+  };
 
   const captureSummary =
     captures.length === 0
       ? "No captures yet."
-      : captures
-          .map((c, i) => `${i + 1}. ${c.type.toUpperCase()} — ${c.title}: ${c.content.slice(0, 200)}`)
-          .join("\n");
+      : captures.map((c, i) => `${i + 1}. [${c.type.toUpperCase()}] ${c.title}: ${c.content.slice(0, 200)}`).join("\n");
 
   return `You are an innovation coach at HAIIC (Human-AI Innovation Commons) helping an inventor develop a patentable idea through a single continuous conversation.
 
+══════════════════════════════════════════════════════════════
+CRITICAL STATE — READ THIS FIRST
+══════════════════════════════════════════════════════════════
+
+CURRENT PHASE: ${currentPhase.toUpperCase()}
+COMPLETED PHASES: ${completedLine}
+NEXT PHASE AFTER CURRENT: ${phaseAfter[currentPhase] || "—"}
+
+${phaseGuidance[currentPhase] || ""}
+
+══════════════════════════════════════════════════════════════
 THE INVENTOR
+══════════════════════════════════════════════════════════════
+
 Handle: ${handle}
+${intentLine}
+
 Background (from their profile):
 ${profileSummary || "No profile background available."}
 
-Their intent for this session: ${intentLine}
+══════════════════════════════════════════════════════════════
+ALREADY CAPTURED — DO NOT RE-CAPTURE THESE
+══════════════════════════════════════════════════════════════
 
-THE PROCESS
-The conversation moves through these phases, but you guide the transitions — the user doesn't see phase walls. They just see a conversation with you, with key moments captured into a sidebar for their reference.
-
-Phases:
-1. problem — define what's broken, slow, or frustrating
-2. explore — dig into root causes, what's been tried, failure modes
-3. ideate — brainstorm solutions across a range (practical → moonshot)
-4. refine — pick the strongest idea and get specific (components, mechanisms, novelty)
-5. brief — synthesize the Invention Brief
-
-Current phase: ${currentPhase}
-
-CAPTURE MECHANISM — THIS IS HOW THE PHASES ADVANCE
-At natural moments (when the user has articulated something well, when a phase feels complete), propose a capture by ending your message with a marker block like this:
-
-[CAPTURE_PROPOSED]
-type: problem
-title: Sensor drift causes assembly line stoppages
-content: A 2-3 sentence summary of what the user has expressed, in their voice, ready to drop into a sidebar card.
-[/CAPTURE_PROPOSED]
-
-Valid types: problem, explore, ideate, refine, brief, insight
-
-WHEN to propose a capture:
-- problem: after the user has clearly described a problem worth solving (usually 2-3 messages in)
-- explore: after root causes / failed prior attempts / hidden assumptions are surfaced
-- ideate: after a meaningful set of 2-4 candidate solutions has been discussed
-- refine: after the strongest idea has been picked and made concrete
-- insight: any time the user reveals a specific durable insight that doesn't fit the main phases but is worth preserving
-- brief: only after refine has been captured AND the user signals they're ready to synthesize
-
-The user will see your written response, then an inline "Capture this?" card with [Yes] [Not yet] [Edit first] buttons. If they say Yes, the capture lands in the sidebar and the next phase begins.
-
-LANE AWARENESS
-If the user drifts ahead (proposing solutions in the problem phase, etc.), park the idea — "Hold that thought, it'll fit better when we get to solutions" — and steer back. Don't let them solve everything in phase 1.
-
-If they jump ideas mid-conversation, follow their lead — but flag at natural moments: "We've got two threads going. Want to focus on X or Y first?"
-
-EXISTING CAPTURES
 ${captureSummary}
 
-Don't re-capture things that already exist. Don't reference them mechanically ("As captured in your problem statement…") — just be aware of them.
+You can reference these naturally if relevant, but never propose a capture for a type that's already in this list.
 
+══════════════════════════════════════════════════════════════
+CAPTURE MECHANISM
+══════════════════════════════════════════════════════════════
+
+When you've decided a capture moment has arrived per the rules above, end your message with a marker block exactly like this:
+
+[CAPTURE_PROPOSED]
+type: ${currentPhase}
+title: A short headline-style title (5-10 words)
+content: A 2-3 sentence summary in the inventor's voice, suitable for a sidebar card.
+[/CAPTURE_PROPOSED]
+
+The marker MUST use type: ${currentPhase === "intake" || currentPhase === "brief" ? "problem (this should not happen — see phase guidance)" : currentPhase}. Any other type is invalid and will be ignored.
+
+The user sees your conversational response, then an inline "Capture this?" card with buttons. If they say Yes, the capture lands in the sidebar and you'll be moved to the next phase.
+
+If you've ALREADY proposed a capture this turn (it's in the conversation history above) but the user is still asking questions or pushing back, do NOT propose it again. Engage with their pushback in normal prose.
+
+══════════════════════════════════════════════════════════════
+SPECIAL CASE — INSIGHT CAPTURES
+══════════════════════════════════════════════════════════════
+
+If the inventor reveals something durable and worth preserving that doesn't fit the main phase (a specific technical insight, a constraint, a personal context that shapes the work), you may propose:
+
+[CAPTURE_PROPOSED]
+type: insight
+title: ...
+content: ...
+[/CAPTURE_PROPOSED]
+
+These don't advance the phase. Use sparingly — once per session at most.
+
+══════════════════════════════════════════════════════════════
+LANE AWARENESS
+══════════════════════════════════════════════════════════════
+
+If the inventor drifts ahead (proposing solutions in the problem phase, etc.), gently park their idea — "Hold that thought, it'll fit better when we get to solutions" — and steer back to the current phase's work.
+
+══════════════════════════════════════════════════════════════
 STYLE
+══════════════════════════════════════════════════════════════
+
 - 2-3 short paragraphs per turn. No walls of text.
 - Warm, direct, never condescending. Acknowledge insight specifically when it appears.
 - Ask one good question at a time, not three.
 - Use the inventor's handle naturally, not every message.
-- When you propose a capture, write the conversational response first, then the marker. Don't preface the marker.
+- When you propose a capture, write the conversational response first, then the marker. Don't preface the marker with "I'll capture this:" or similar — just write naturally and end with the marker block.
 
-Begin or continue the conversation now.`;
+Continue the conversation now, working in the ${currentPhase.toUpperCase()} phase as described above.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CAPTURE MARKER PARSING
-// Extract [CAPTURE_PROPOSED]…[/CAPTURE_PROPOSED] blocks from AI messages.
-// Returns { visible: textWithoutMarker, proposal: {type,title,content} | null }
 // ─────────────────────────────────────────────────────────────────────────────
 function parseCaptureMarker(text) {
   if (!text) return { visible: text, proposal: null };
@@ -133,7 +194,7 @@ function parseCaptureMarker(text) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EXPORT — unified-chat .docx (simpler than the old per-phase version)
+// EXPORT — unified-chat .docx
 // ─────────────────────────────────────────────────────────────────────────────
 async function exportToDocx(project, handle) {
   const { name, data } = project;
@@ -179,7 +240,6 @@ async function exportToDocx(project, handle) {
     spacer(240),
   );
 
-  // Captures section
   if (Array.isArray(data.captures) && data.captures.length > 0) {
     children.push(h2("Captured Artifacts"), spacer(60));
     for (const cap of data.captures) {
@@ -197,7 +257,6 @@ async function exportToDocx(project, handle) {
     }
   }
 
-  // Full conversation
   if (Array.isArray(data.messages) && data.messages.length > 0) {
     children.push(h2("Full Conversation"), spacer(60));
     for (const msg of data.messages) {
@@ -221,7 +280,6 @@ async function exportToDocx(project, handle) {
     }
   }
 
-  // Brief if synthesized
   if (data.inventionBrief) {
     children.push(
       new Paragraph({ children: [new TextRun("")], pageBreakBefore: true }),
@@ -285,7 +343,7 @@ async function exportToDocx(project, handle) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LEGACY PROJECT VIEW — read-only display + delete button
+// LEGACY PROJECT VIEW
 // ─────────────────────────────────────────────────────────────────────────────
 function LegacyView({ project, onBack, onDelete }) {
   const data = project?.data || {};
@@ -326,7 +384,7 @@ function LegacyView({ project, onBack, onDelete }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// INTAKE PHASE — short form: "anything changed?" + "what brings you here?"
+// INTAKE PHASE
 // ─────────────────────────────────────────────────────────────────────────────
 function IntakePhase({ handle, profileSummary, onStart }) {
   const [intent, setIntent] = useState(null);
@@ -409,7 +467,7 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle, onOpenLegacy }) 
       id: genId(),
       user_id: user.id,
       name,
-      phase: 0, // legacy field, ignored by new architecture
+      phase: 0,
       data: {
         schema: "unified-v1",
         currentPhase: "intake",
@@ -511,17 +569,16 @@ export default function BrainstormPage() {
   const [profileSummary, setSummary]  = useState("");
   const [authLoading, setAuthLoading] = useState(true);
 
-  const [view, setView] = useState("dashboard"); // dashboard | session | legacy
+  const [view, setView] = useState("dashboard");
   const [project, setProject] = useState(null);
 
-  // Project session state — derived from project.data and synced back to Supabase
   const [intent,         setIntent]         = useState(null);
   const [intakeUpdates,  setIntakeUpdates]  = useState("");
   const [messages,       setMessages]       = useState([]);
   const [captures,       setCaptures]       = useState([]);
   const [currentPhase,   setCurrentPhase]   = useState("intake");
   const [inventionBrief, setBrief]          = useState(null);
-  const [pendingCapture, setPendingCapture] = useState(null); // {afterMsgIdx, type, title, content}
+  const [pendingCapture, setPendingCapture] = useState(null);
 
   const [chatLoading, setChatLoading] = useState(false);
   const [saving,      setSaving]      = useState(false);
@@ -529,7 +586,6 @@ export default function BrainstormPage() {
 
   const saveTimerRef = useRef(null);
 
-  // ── Auth + profile ────────────────────────────────────────────────────────
   useEffect(() => {
     const loadProfile = async (userId) => {
       const { data: profile } = await supabase
@@ -556,7 +612,6 @@ export default function BrainstormPage() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // ── Auto-save (debounced 800ms) ───────────────────────────────────────────
   useEffect(() => {
     if (!project || authLoading || view !== "session") return;
     if (project?.data?.schema !== "unified-v1") return;
@@ -569,12 +624,8 @@ export default function BrainstormPage() {
     return () => clearTimeout(saveTimerRef.current);
   }, [messages, captures, currentPhase, intent, intakeUpdates, inventionBrief]);
 
-  // ── beforeunload flush — make sure the last keystroke saves ───────────────
   useEffect(() => {
     const handler = () => {
-      // Best-effort synchronous save trigger; the actual write may not complete
-      // before unload, but auto-save runs every 800ms during typing so the gap
-      // is small. This is here so the LAST keystroke / message has a chance.
       if (project && view === "session" && project?.data?.schema === "unified-v1") {
         saveNow();
       }
@@ -604,7 +655,6 @@ export default function BrainstormPage() {
     setTimeout(() => setJustSaved(false), 1200);
   };
 
-  // ── Send a message to Claude ──────────────────────────────────────────────
   const sendMessage = useCallback(async (text) => {
     if (!text || chatLoading) return;
 
@@ -647,12 +697,17 @@ export default function BrainstormPage() {
       const finalMessages = [...nextMessages, assistantMsg];
       setMessages(finalMessages);
 
+      // Guard: only honor proposals that match the current phase OR are 'insight'.
+      // This blocks stale/wrong-phase capture proposals from the AI.
       if (proposal) {
-        // Attach to the assistant message we just added
-        setPendingCapture({
-          afterMsgIdx: finalMessages.length - 1,
-          ...proposal,
-        });
+        const allowed = proposal.type === currentPhase || proposal.type === "insight";
+        const alreadyExists = captures.some((c) => c.type === proposal.type) && proposal.type !== "insight";
+        if (allowed && !alreadyExists) {
+          setPendingCapture({
+            afterMsgIdx: finalMessages.length - 1,
+            ...proposal,
+          });
+        }
       }
     } catch (err) {
       setMessages((prev) => [...prev, {
@@ -665,7 +720,6 @@ export default function BrainstormPage() {
     }
   }, [messages, chatLoading, handle, profileSummary, intent, currentPhase, captures, intakeUpdates]);
 
-  // ── Capture approval / dismissal ──────────────────────────────────────────
   const approveCapture = () => {
     if (!pendingCapture) return;
     const cap = {
@@ -679,7 +733,6 @@ export default function BrainstormPage() {
     };
     setCaptures((prev) => [...prev, cap]);
 
-    // Advance the phase
     const nextPhase = advancePhase(currentPhase, cap.type);
     if (nextPhase) setCurrentPhase(nextPhase);
 
@@ -688,7 +741,6 @@ export default function BrainstormPage() {
 
   const dismissCapture = () => setPendingCapture(null);
 
-  // ── Brief synthesis (final phase) ─────────────────────────────────────────
   const generateBrief = async () => {
     setChatLoading(true);
     try {
@@ -759,7 +811,6 @@ This Invention Brief is ready to be taken into Patent Forge.`,
     window.location.href = "/patent-forge";
   };
 
-  // ── Navigation handlers ───────────────────────────────────────────────────
   const handleNew = (proj) => {
     setProject(proj);
     setCurrentPhase("intake");
@@ -819,7 +870,6 @@ This Invention Brief is ready to be taken into Patent Forge.`,
     setIntent(chosenIntent);
     setIntakeUpdates(updates);
     setCurrentPhase("problem");
-    // Kick off the conversation with a system-only opening turn
     const opener =
       chosenIntent === "idea"
         ? "Tell me about your idea — what is it, and what made you start thinking about it?"
@@ -834,7 +884,6 @@ This Invention Brief is ready to be taken into Patent Forge.`,
     }]);
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
   if (authLoading) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", color: "#888", fontFamily: "'DM Sans', sans-serif", fontSize: 16 }}>
@@ -873,11 +922,9 @@ This Invention Brief is ready to be taken into Patent Forge.`,
     );
   }
 
-  // view === "session"
   const showIntake = currentPhase === "intake";
   const canSynthesize = captures.some((c) => c.type === "refine") && !inventionBrief && currentPhase !== "brief";
 
-  // Build inlineActions for ChatThread
   const inlineActions = [];
   if (pendingCapture) {
     inlineActions.push({
@@ -962,18 +1009,14 @@ This Invention Brief is ready to be taken into Patent Forge.`,
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
 function advancePhase(current, captureType) {
-  // Phase advances to the phase AFTER the captured one
   const captureToNextPhase = {
     problem: "explore",
     explore: "ideate",
     ideate:  "refine",
-    refine:  "refine", // stay in refine until brief is synthesized
+    refine:  "refine",
     brief:   "brief",
-    insight: current, // insights don't advance the phase
+    insight: current,
   };
   return captureToNextPhase[captureType] || current;
 }
@@ -1009,9 +1052,6 @@ function buildProfileSummary(categories) {
   return lines.join("\n\n");
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Styles
-// ─────────────────────────────────────────────────────────────────────────────
 const pg = {
   header: { marginBottom: 16 },
   label: { color: theme.red, fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", marginBottom: 6 },
