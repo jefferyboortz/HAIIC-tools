@@ -25,8 +25,6 @@ const TABLE       = "patent_projects";
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
-// ─── Export (.docx) ───────────────────────────────────────────────────────────
-
 async function exportToDocx(project) {
   const { name, data, section } = project;
   const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Header, Footer, PageNumber, TabStopType, TabStopPosition } = await import("docx");
@@ -57,8 +55,6 @@ async function exportToDocx(project) {
   const blob = await Packer.toBlob(doc); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `HAIIC-PatentForge-${(data.patentTitle || name || "patent").replace(/[^a-z0-9]/gi, "-").toLowerCase()}.docx`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 
-// ─── Novelty Advisor ──────────────────────────────────────────────────────────
-
 function NoveltyAdvisor({ data, context, onSave }) {
   const [open, setOpen] = useState(false); const [assessment, setAssessment] = useState(data.noveltyAssessment || null); const [loading, setLoading] = useState(false); const [followUp, setFollowUp] = useState(""); const [thread, setThread] = useState(data.noveltyThread || []);
   const sys = `You are a knowledgeable friend who has been through the patent process. Give inventors an honest, plain-English read on novelty and patentability — and concrete suggestions to strengthen it. Tone: honest but encouraging.\n\n🔍 THE HONEST READ\nOne paragraph.\n\n✅ WHAT'S WORKING\n2-3 specific strengths.\n\n⚠️ WATCH OUT FOR\n1-2 prior art concerns.\n\n💡 HOW TO STRENGTHEN IT\n2-3 actionable suggestions.\n\nEnd with: "Remember: the first idea is rarely the best — every refinement gets you closer. This is a starting point, not a verdict. A registered patent attorney can run a full prior art search before you file."`;
@@ -72,9 +68,7 @@ function NoveltyAdvisor({ data, context, onSave }) {
   );
 }
 
-// ─── Project Dashboard ────────────────────────────────────────────────────────
-
-function ProjectDashboard({ onNew, onResume, onSignOut, userEmail }) {
+function ProjectDashboard({ onNew, onResume, onSignOut, handle }) {
   const [projects, setProjects] = useState([]); const [newName, setNewName] = useState(""); const [loading, setLoading] = useState(true); const [handoff, setHandoff] = useState(null);
   useEffect(() => { fetchProjects(); try { const h = localStorage.getItem(HANDOFF_KEY); if (h) setHandoff(JSON.parse(h)); } catch {} }, []);
   const fetchProjects = async () => { setLoading(true); const { data } = await supabase.from(TABLE).select("*").order("updated_at", { ascending: false }); setProjects(data || []); setLoading(false); };
@@ -85,7 +79,7 @@ function ProjectDashboard({ onNew, onResume, onSignOut, userEmail }) {
   const sl = (i) => i >= SECTIONS.length - 1 ? "Complete ★" : SECTIONS[i]?.label || "?";
   return (
     <div style={ps.content}>
-      <div style={db.topRow}><h2 style={ps.title}>Your Patent Applications</h2><div style={db.userRow}><span style={db.userEmail}>{userEmail}</span><button onClick={onSignOut} style={db.signOutBtn}>Sign Out</button></div></div>
+      <div style={db.topRow}><h2 style={ps.title}>Your Patent Applications</h2><div style={db.userRow}><span style={db.userHandle}>{handle}</span><button onClick={onSignOut} style={db.signOutBtn}>Sign Out</button></div></div>
       <p style={ps.desc}>Each application saves automatically — resume from any device, any time.</p>
       {handoff && (<div style={hf.banner}><div style={hf.bannerLeft}><div style={hf.bannerTitle}>🔗 Brainstorm session ready to continue</div><div style={hf.bannerMeta}>"{handoff.name}" — title, field, and brief pre-filled.</div></div><div style={hf.bannerRight}><button onClick={handleHandoff} style={hf.continueBtn}>Continue in Patent Forge →</button><button onClick={() => { try { localStorage.removeItem(HANDOFF_KEY); } catch {} setHandoff(null); }} style={hf.dismissBtn}>Dismiss</button></div></div>)}
       <div style={db.newRow}><input style={{ ...ps.input, flex: 1, marginTop: 0 }} value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleNew()} placeholder="Name your invention (optional)..." /><button onClick={handleNew} style={ps.nextBtn}>Start New Application →</button></div>
@@ -95,8 +89,6 @@ function ProjectDashboard({ onNew, onResume, onSignOut, userEmail }) {
     </div>
   );
 }
-
-// ─── Section Components ───────────────────────────────────────────────────────
 
 function InventorSection({ data, setData, onNext }) {
   const [name, setName] = useState(data.inventorName || ""); const [city, setCity] = useState(data.city || ""); const [state, setState] = useState(data.state || ""); const [country, setCountry] = useState(data.country || "United States"); const [email, setEmail] = useState(data.email || "");
@@ -218,21 +210,23 @@ function ReviewSection({ data, setData }) {
   );
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
-
 export default function PatentForgePage() {
   const router = useRouter();
-  const [user, setUser] = useState(null); const [authLoading, setAuthLoading] = useState(true);
+  const [user, setUser] = useState(null); const [handle, setHandle] = useState(""); const [authLoading, setAuthLoading] = useState(true);
   const [view, setView] = useState("dashboard"); const [project, setProject] = useState(null); const [section, setSection] = useState(0); const [data, setData] = useState({});
 
   useEffect(() => {
+    const loadHandle = async (userId) => {
+      const { data: profile } = await supabase.from("user_profiles").select("name").eq("user_id", userId).maybeSingle();
+      setHandle((profile?.name || "").trim() || "Inventor");
+    };
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) { router.push("/login?next=/patent-forge"); return; }
-      setUser(session.user); setAuthLoading(false);
+      setUser(session.user); loadHandle(session.user.id); setAuthLoading(false);
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!session) router.push("/login?next=/patent-forge");
-      else { setUser(session.user); setAuthLoading(false); }
+      else { setUser(session.user); loadHandle(session.user.id); setAuthLoading(false); }
     });
     return () => subscription.unsubscribe();
   }, []);
@@ -259,7 +253,7 @@ export default function PatentForgePage() {
     return (
       <Layout title="Patent Forge" logoSrc="/patentforge-logo.png">
         <div style={styles.header}><p style={styles.label}>PATENT FORGE</p><h1 style={styles.heading}>Draft Your Provisional Patent</h1></div>
-        <ProjectDashboard onNew={handleNew} onResume={handleResume} onSignOut={handleSignOut} userEmail={user?.email} />
+        <ProjectDashboard onNew={handleNew} onResume={handleResume} onSignOut={handleSignOut} handle={handle} />
       </Layout>
     );
   }
@@ -273,7 +267,7 @@ export default function PatentForgePage() {
         <div style={tb.actions}>
           <button onClick={handleSave} style={tb.btn}>💾 Save</button>
           <button onClick={handleExport} style={tb.btn}>⬇ Export .docx</button>
-          <span style={tb.userEmail}>{user?.email}</span>
+          <span style={tb.userHandle}>{handle}</span>
           <button onClick={handleSignOut} style={tb.signOutBtn}>Sign Out</button>
         </div>
       </div>
@@ -299,8 +293,6 @@ export default function PatentForgePage() {
     </Layout>
   );
 }
-
-// ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = {
   header: { marginBottom: 24 },
@@ -340,7 +332,7 @@ const ps = {
 const db = {
   topRow:     { display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 4 },
   userRow:    { display: "flex", alignItems: "center", gap: 10 },
-  userEmail:  { fontSize: 12, color: theme.textDim },
+  userHandle: { fontSize: 13, color: theme.red, fontWeight: 700 },
   signOutBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "5px 10px", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   newRow:     { display: "flex", gap: 12, marginBottom: 32, alignItems: "center", flexWrap: "wrap" },
   list:       { display: "flex", flexDirection: "column", gap: 10 },
@@ -360,7 +352,7 @@ const tb = {
   projectName: { flex: 1, fontSize: 13, fontWeight: 600, color: theme.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   actions:     { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" },
   btn:         { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
-  userEmail:   { fontSize: 11, color: theme.textDim },
+  userHandle:  { fontSize: 12, color: theme.red, fontWeight: 700 },
   signOutBtn:  { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "5px 10px", fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
 };
 const na = {
@@ -381,15 +373,4 @@ const na = {
   followInput: { flex: 1, background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 7, color: theme.text, padding: "8px 12px", fontSize: 13, fontFamily: "'DM Sans', sans-serif", outline: "none" },
   askBtn:      { background: theme.red, border: "none", borderRadius: 7, color: "#fff", padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   rerunBtn:    { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textDim, padding: "6px 12px", fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
-};
-const hf = {
-  banner:      { display: "flex", justifyContent: "space-between", alignItems: "center", background: theme.surface, border: `1px solid ${theme.red}`, borderRadius: 10, padding: "16px 20px", marginBottom: 24, gap: 16, flexWrap: "wrap" },
-  bannerLeft:  { flex: 1 },
-  bannerTitle: { fontSize: 14, fontWeight: 700, color: theme.text, marginBottom: 4 },
-  bannerMeta:  { fontSize: 13, color: theme.textMuted, lineHeight: 1.5 },
-  bannerRight: { display: "flex", gap: 8, alignItems: "center" },
-  continueBtn: { background: theme.red, border: "none", borderRadius: 7, color: "#fff", padding: "10px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", whiteSpace: "nowrap" },
-  dismissBtn:  { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 7, color: theme.textMuted, padding: "8px 14px", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
-  infoBar:     { background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 8, padding: "10px 14px", fontSize: 13, color: theme.textMuted, marginBottom: 16, lineHeight: 1.5 },
-  tag:         { marginLeft: 8, background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 4, padding: "1px 6px", fontSize: 10, color: theme.textDim, fontWeight: 600 },
 };
