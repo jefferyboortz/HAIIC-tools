@@ -4,7 +4,8 @@ import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
   "https://quruzppflgdbddxyylxu.supabase.co",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cnV6cHBmbGdkYmRkeHl5bHh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2MDQ1NTEsImV4cCI6MjA4OTE4MDU1MX0.y6acgCo6EZZiEDIJHSx6J3T60L1P6M_DH3vTIulFvJ0"
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cnV6cHBmbGdkYmRkeHl5bHh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2MDQ1NTEsImV4cCI6MjA4OTE4MDU1MX0.y6acgCo6EZZiEDIJHSx6J3T60L1P6M_DH3vTIulFvJ0",
+  { auth: { storageKey: "haiic-auth", persistSession: true, autoRefreshToken: true } }
 );
 
 const MAX_CV_SIZE_MB = 5;
@@ -408,6 +409,7 @@ export default function ProfilePage() {
 
       {mfaModal === "enrolling" && (
         <EnrollMfaModal
+          supabase={supabase}
           onClose={() => setMfaModal(null)}
           onComplete={() => {
             setMfaModal(null);
@@ -419,7 +421,7 @@ export default function ProfilePage() {
   );
 }
 
-function EnrollMfaModal({ onClose, onComplete }) {
+function EnrollMfaModal({ supabase, onClose, onComplete }) {
   const [step, setStep] = useState("loading");
   const [factorId, setFactorId] = useState(null);
   const [qrUrl, setQrUrl] = useState(null);
@@ -434,7 +436,6 @@ function EnrollMfaModal({ onClose, onComplete }) {
 
     const start = async () => {
       try {
-        // Aggressive cleanup: remove ALL existing TOTP factors before enrolling
         const { data: existing } = await supabase.auth.mfa.listFactors();
         const allFactors = existing?.totp || [];
         for (const f of allFactors) {
@@ -447,8 +448,6 @@ function EnrollMfaModal({ onClose, onComplete }) {
         createdFactorId = data.id;
         setFactorId(data.id);
 
-        // Use the otpauth:// URI to generate a clean PNG via qrserver.com
-        // Supabase returns this in data.totp.uri
         const uri = data.totp?.uri;
         if (uri) {
           const pngUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(uri)}`;
