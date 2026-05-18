@@ -15,10 +15,16 @@ const SECTIONS = [
   { id: "review",      label: "Filing Package", icon: "★" },
 ];
 
-const HANDOFF_KEY = "haiic_pf_handoff";
-const TABLE       = "patent_projects";
+const HANDOFF_KEY    = "haiic_pf_handoff";
+const TABLE          = "patent_projects";
+const BRAINSTORM_TBL = "brainstorm_projects";
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+
+function briefDisplayName(brief) {
+  if (!brief) return "Untitled brief";
+  return (brief.label && brief.label.trim()) || `Brief v${brief.versionNumber}`;
+}
 
 async function exportToDocx(project) {
   const { name, data, section } = project;
@@ -63,12 +69,150 @@ function NoveltyAdvisor({ data, context, onSave }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// BRAINSTORM IMPORT PICKER
+// Shows all Brainstorm projects. Projects without briefs are dimmed and show
+// inline guidance when clicked.
+// ─────────────────────────────────────────────────────────────────────────────
+function BrainstormImportPicker({ onImport }) {
+  const [open, setOpen]               = useState(false);
+  const [loading, setLoading]         = useState(false);
+  const [brainstormProjects, setBP]   = useState([]);
+  const [fetched, setFetched]         = useState(false);
+
+  const fetchBrainstormProjects = async () => {
+    setLoading(true);
+    try {
+      const { data } = await supabase.from(BRAINSTORM_TBL).select("*").order("updated_at", { ascending: false });
+      setBP(Array.isArray(data) ? data : []);
+    } catch {
+      setBP([]);
+    } finally {
+      setLoading(false);
+      setFetched(true);
+    }
+  };
+
+  const toggleOpen = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && !fetched) fetchBrainstormProjects();
+  };
+
+  const handlePick = (project) => {
+    const briefs = Array.isArray(project?.data?.briefs) ? project.data.briefs : [];
+    if (briefs.length === 0) return;
+    const latest = briefs[briefs.length - 1];
+    const briefContent = latest?.content || "";
+
+    const titleMatch = briefContent.match(/Title:\s*(.+)/);
+    const fieldMatch = briefContent.match(/Field:\s*(.+)/);
+    const title = titleMatch ? titleMatch[1].trim() : "";
+    const field = fieldMatch ? fieldMatch[1].trim() : "";
+
+    onImport({
+      name: project.name || "Brainstorm Import",
+      patentTitle: title,
+      patentField: field,
+      brainstormBrief: briefContent,
+      briefVersionLabel: briefDisplayName(latest),
+    });
+  };
+
+  return (
+    <div style={imp.wrap}>
+      <button onClick={toggleOpen} style={imp.toggle}>
+        {open ? "▼" : "▶"} Or import from a Brainstorm project
+      </button>
+
+      {open && (
+        <div style={imp.panel}>
+          <p style={imp.constraint}>
+            Patent Forge imports the <strong>latest brief</strong> from each Brainstorm project.
+            To use an older version, open the project in Brainstorm first and re-synthesize from
+            the captures you want — that version becomes the new latest.
+          </p>
+
+          {loading && <p style={imp.loadingMsg}>Loading your Brainstorm projects…</p>}
+
+          {!loading && fetched && brainstormProjects.length === 0 && (
+            <p style={imp.emptyMsg}>
+              No Brainstorm projects yet. Start one in Brainstorm first, then come back here to import.
+            </p>
+          )}
+
+          {!loading && brainstormProjects.length > 0 && (
+            <div style={imp.list}>
+              {brainstormProjects.map(p => {
+                const briefs = Array.isArray(p?.data?.briefs) ? p.data.briefs : [];
+                const hasBrief = briefs.length > 0;
+                const latest = hasBrief ? briefs[briefs.length - 1] : null;
+
+                return (
+                  <div key={p.id} style={{ ...imp.row, ...(hasBrief ? {} : imp.rowDim) }}>
+                    <div style={imp.rowMain}>
+                      <div style={imp.rowLeft}>
+                        <div style={imp.rowName}>{p.name}</div>
+                        <div style={imp.rowMeta}>
+                          {hasBrief ? (
+                            <>
+                              Latest: <span style={imp.versionLabel}>{briefDisplayName(latest)}</span>
+                              {" · "}{new Date(latest.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                            </>
+                          ) : (
+                            <span style={imp.noBriefIndicator}>No brief yet</span>
+                          )}
+                        </div>
+                      </div>
+                      {hasBrief ? (
+                        <button onClick={() => handlePick(p)} style={imp.useBtn}>Use this →</button>
+                      ) : (
+                        <span style={imp.useBtnDisabled}>—</span>
+                      )}
+                    </div>
+                    {!hasBrief && (
+                      <p style={imp.rowInstruction}>
+                        No brief synthesized yet for this project. Open it in Brainstorm and click
+                        "Generate Invention Brief" (or "Synthesize new version" if you've already started).
+                        Then come back here.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProjectDashboard({ onNew, onResume, onSignOut, handle, isFirstTimeUser }) {
   const [projects, setProjects] = useState([]); const [newName, setNewName] = useState(""); const [loading, setLoading] = useState(true); const [handoff, setHandoff] = useState(null);
   useEffect(() => { fetchProjects(); try { const h = localStorage.getItem(HANDOFF_KEY); if (h) setHandoff(JSON.parse(h)); } catch {} }, []);
   const fetchProjects = async () => { setLoading(true); const { data } = await supabase.from(TABLE).select("*").order("updated_at", { ascending: false }); setProjects(data || []); setLoading(false); };
   const handleHandoff = async () => { if (!handoff) return; const { data: { user } } = await supabase.auth.getUser(); const project = { id: genId(), user_id: user.id, name: handoff.name || "Brainstorm Import", section: 0, data: { patentTitle: handoff.patentTitle || "", patentField: handoff.patentField || handoff.field || "", summary: handoff.inventionBrief ? handoff.inventionBrief.substring(0, 400) : "", brainstormBrief: handoff.inventionBrief || "", noveltyAssessment: handoff.noveltyAssessment || null, fromBrainstorm: true } }; await supabase.from(TABLE).insert(project); try { localStorage.removeItem(HANDOFF_KEY); } catch {} setHandoff(null); onNew(project); };
   const handleNew = async () => { const name = newName.trim() || `Patent Application — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`; const { data: { user } } = await supabase.auth.getUser(); const project = { id: genId(), user_id: user.id, name, section: 0, data: {} }; await supabase.from(TABLE).insert(project); setNewName(""); onNew(project); };
+  const handleImportFromBrainstorm = async (imported) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    const project = {
+      id: genId(),
+      user_id: user.id,
+      name: imported.name,
+      section: 0,
+      data: {
+        patentTitle: imported.patentTitle || "",
+        patentField: imported.patentField || "",
+        summary: imported.brainstormBrief ? imported.brainstormBrief.substring(0, 400) : "",
+        brainstormBrief: imported.brainstormBrief || "",
+        importedBriefVersion: imported.briefVersionLabel || "",
+        fromBrainstorm: true,
+      },
+    };
+    await supabase.from(TABLE).insert(project);
+    onNew(project);
+  };
   const handleDelete = async (id, name) => { if (!confirm(`Delete "${name}"?`)) return; await supabase.from(TABLE).delete().eq("id", id); setProjects(p => p.filter(x => x.id !== id)); };
   const handleRename = async (id) => { const p = projects.find(p => p.id === id); const n = prompt("Rename:", p.name); if (!n?.trim()) return; await supabase.from(TABLE).update({ name: n.trim(), updated_at: new Date().toISOString() }).eq("id", id); setProjects(prev => prev.map(x => x.id === id ? { ...x, name: n.trim() } : x)); };
   const sl = (i) => i >= SECTIONS.length - 1 ? "Complete ★" : SECTIONS[i]?.label || "?";
@@ -88,9 +232,13 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle, isFirstTimeUser 
       )}
 
       {handoff && (<div style={hf.banner}><div style={hf.bannerLeft}><div style={hf.bannerTitle}>🔗 Brainstorm session ready to continue</div><div style={hf.bannerMeta}>"{handoff.name}" — title, field, and brief pre-filled.</div></div><div style={hf.bannerRight}><button onClick={handleHandoff} style={hf.continueBtn}>Continue in Patent Forge →</button><button onClick={() => { try { localStorage.removeItem(HANDOFF_KEY); } catch {} setHandoff(null); }} style={hf.dismissBtn}>Dismiss</button></div></div>)}
+
       <div style={db.newRow}><input style={{ ...ps.input, flex: 1, marginTop: 0 }} value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleNew()} placeholder="Name your invention (optional)..." /><button onClick={handleNew} style={ps.nextBtn}>Start New Application →</button></div>
+
+      <BrainstormImportPicker onImport={handleImportFromBrainstorm} />
+
       {loading && <p style={{ color: theme.textMuted, fontSize: 14 }}>Loading your applications…</p>}
-      {!loading && projects.length > 0 && (<div style={db.list}><p style={db.listHeader}>SAVED APPLICATIONS ({projects.length})</p>{projects.map(p => (<div key={p.id} style={db.card}><div style={db.cardLeft}><div style={db.cardName}>{p.name}{p.data?.fromBrainstorm && <span style={hf.tag}>from Brainstorm</span>}</div><div style={db.cardMeta}>Last saved {new Date(p.updated_at).toLocaleString()} &nbsp;·&nbsp; Stage: <span style={{ color: theme.red }}>{sl(p.section)}</span></div></div><div style={db.cardRight}><button onClick={() => onResume(p)} style={db.resumeBtn}>Resume →</button><button onClick={() => handleRename(p.id)} style={db.iconBtn} title="Rename">✏</button><button onClick={() => handleDelete(p.id, p.name)} style={db.iconBtn} title="Delete">✕</button></div></div>))}</div>)}
+      {!loading && projects.length > 0 && (<div style={db.list}><p style={db.listHeader}>SAVED APPLICATIONS ({projects.length})</p>{projects.map(p => (<div key={p.id} style={db.card}><div style={db.cardLeft}><div style={db.cardName}>{p.name}{p.data?.fromBrainstorm && <span style={hf.tag}>from Brainstorm</span>}{p.data?.importedBriefVersion && <span style={imp.briefTag}>{p.data.importedBriefVersion}</span>}</div><div style={db.cardMeta}>Last saved {new Date(p.updated_at).toLocaleString()} &nbsp;·&nbsp; Stage: <span style={{ color: theme.red }}>{sl(p.section)}</span></div></div><div style={db.cardRight}><button onClick={() => onResume(p)} style={db.resumeBtn}>Resume →</button><button onClick={() => handleRename(p.id)} style={db.iconBtn} title="Rename">✏</button><button onClick={() => handleDelete(p.id, p.name)} style={db.iconBtn} title="Delete">✕</button></div></div>))}</div>)}
       {!loading && projects.length === 0 && !handoff && <div style={db.empty}>No saved applications yet. Start your first one above.</div>}
     </div>
   );
@@ -139,7 +287,6 @@ function InventorSection({ data, setData, onNext, profileName, profileCity, prof
 function AgreementSection({ data, setData, onNext, hasAgreedBefore, justSaved }) {
   const [agreed, setAgreed] = useState(data.agreed || hasAgreedBefore || false);
 
-  // Returning user — show the compressed version
   if (hasAgreedBefore && !data.fromBrainstorm) {
     return (
       <div style={ps.content}>
@@ -439,6 +586,27 @@ const ps = {
   stickyBar: { position: "sticky", bottom: 0, background: "#1a1a1a", borderTop: `1px solid ${theme.border}`, marginTop: 24, padding: "14px 0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, zIndex: 5 },
   stickyBarRight: { display: "flex", gap: 8, alignItems: "center", marginLeft: "auto" },
   savedInline: { fontSize: 12, fontWeight: 700, color: "#80ff99", letterSpacing: 1 },
+};
+const imp = {
+  wrap: { marginTop: -8, marginBottom: 24 },
+  toggle: { background: "transparent", border: "none", color: theme.red, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: "6px 0", fontFamily: "'DM Sans', sans-serif" },
+  panel: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 10, padding: 18, marginTop: 8 },
+  constraint: { fontSize: 12, color: theme.textMuted, lineHeight: 1.6, marginBottom: 14, marginTop: 0, padding: "10px 12px", background: theme.surfaceAlt, borderRadius: 6, border: `1px solid ${theme.border}` },
+  loadingMsg: { color: theme.textMuted, fontSize: 13, fontStyle: "italic", margin: "8px 0" },
+  emptyMsg: { color: theme.textMuted, fontSize: 13, lineHeight: 1.6, padding: "12px 0", margin: 0 },
+  list: { display: "flex", flexDirection: "column", gap: 8 },
+  row: { background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 8, padding: "10px 14px" },
+  rowDim: { opacity: 0.55 },
+  rowMain: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" },
+  rowLeft: { flex: 1, minWidth: 200 },
+  rowName: { fontSize: 14, fontWeight: 600, color: theme.text, marginBottom: 3 },
+  rowMeta: { fontSize: 12, color: theme.textDim },
+  versionLabel: { color: theme.text, fontWeight: 600 },
+  noBriefIndicator: { color: theme.textDim, fontStyle: "italic" },
+  useBtn: { background: theme.red, border: "none", borderRadius: 6, color: "#fff", padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", whiteSpace: "nowrap" },
+  useBtnDisabled: { color: theme.textDim, fontSize: 18, padding: "7px 14px", fontWeight: 700 },
+  rowInstruction: { fontSize: 12, color: theme.textMuted, lineHeight: 1.6, marginTop: 8, marginBottom: 0, paddingTop: 8, borderTop: `1px dashed ${theme.border}`, fontStyle: "italic" },
+  briefTag: { background: theme.surfaceAlt, color: theme.textMuted, fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4, marginLeft: 6, verticalAlign: "middle", border: `1px solid ${theme.border}` },
 };
 const wb = {
   banner: { background: theme.surface, border: `1px solid ${theme.red}`, borderRadius: 10, padding: "16px 20px", marginBottom: 24, display: "flex", gap: 14, alignItems: "flex-start" },
