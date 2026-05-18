@@ -1639,9 +1639,9 @@ What would you like to revisit? We can revise any of the captures, dig deeper on
                     messages={displayMessages}
                     loading={chatLoading}
                     onSend={sendMessage}
-                    placeholder={chatDisabled ? "Finish editing the capture first…" : "Type a message…"}
+                    placeholder="Type a message…"
                     inlineActions={inlineActions}
-                    disabled={chatDisabled}
+                    hideInput={chatDisabled}
                   />
 
                   {editingCapture && (
