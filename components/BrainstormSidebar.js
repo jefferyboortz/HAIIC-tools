@@ -1,8 +1,8 @@
 import theme from "./theme";
 
 // Sidebar for the unified-chat Brainstorm architecture.
-// - Phase progress tally (six phases, current/done/upcoming)
-// - Captures list
+// - Phase progress tally
+// - Captures list with Edit button on each card
 
 const PHASE_LABELS = {
   intake:   "Getting to know you",
@@ -33,7 +33,6 @@ const CAPTURE_TYPE_LABELS = {
   insight:    "Insight",
 };
 
-// Map a capture type to the phase it completes
 const CAPTURE_COMPLETES_PHASE = {
   problem: "problem",
   explore: "explore",
@@ -47,19 +46,17 @@ export default function BrainstormSidebar({
   captures,
   onSave,
   onExport,
+  onEditCapture,
+  editingCaptureId,
   saving,
   justSaved,
 }) {
-  // Which phases have been completed (have a capture of that type)?
   const completedPhases = new Set();
   for (const cap of captures) {
     const p = CAPTURE_COMPLETES_PHASE[cap.type];
     if (p) completedPhases.add(p);
   }
-  // Intake is "complete" as soon as we're past it
   if (currentPhase !== "intake") completedPhases.add("intake");
-
-  const currentIdx = PHASE_ORDER.indexOf(currentPhase);
 
   return (
     <aside style={styles.sidebar}>
@@ -80,10 +77,9 @@ export default function BrainstormSidebar({
       <div style={styles.progressSection}>
         <p style={styles.sectionLabel}>PROGRESS</p>
         <div style={styles.progressList}>
-          {PHASE_ORDER.map((phase, i) => {
+          {PHASE_ORDER.map((phase) => {
             const isCompleted = completedPhases.has(phase) && phase !== currentPhase;
             const isCurrent = phase === currentPhase;
-            const isUpcoming = !isCompleted && !isCurrent;
 
             let marker, markerStyle, labelStyle;
             if (isCompleted) {
@@ -124,19 +120,42 @@ export default function BrainstormSidebar({
           </div>
         )}
 
-        {captures.map((cap) => (
-          <div key={cap.id} style={styles.card}>
-            <div style={styles.cardLabel}>
-              {CAPTURE_TYPE_LABELS[cap.type] || "Captured"}
-            </div>
-            <div style={styles.cardTitle}>{cap.title || "Untitled capture"}</div>
-            {cap.content && (
-              <div style={styles.cardSnippet}>
-                {cap.content.length > 140 ? cap.content.slice(0, 140) + "…" : cap.content}
+        {captures.map((cap) => {
+          const isBeingEdited = cap.id === editingCaptureId;
+          return (
+            <div
+              key={cap.id}
+              style={{
+                ...styles.card,
+                opacity: isBeingEdited ? 0.5 : 1,
+                borderColor: isBeingEdited ? theme.red : theme.border,
+              }}
+            >
+              <div style={styles.cardLabel}>
+                {CAPTURE_TYPE_LABELS[cap.type] || "Captured"}
               </div>
-            )}
-          </div>
-        ))}
+              <div style={styles.cardTitle}>{cap.title || "Untitled capture"}</div>
+              {cap.content && (
+                <div style={styles.cardSnippet}>
+                  {cap.content.length > 140 ? cap.content.slice(0, 140) + "…" : cap.content}
+                </div>
+              )}
+              <div style={styles.cardActions}>
+                {isBeingEdited ? (
+                  <span style={styles.editingTag}>Editing in chat…</span>
+                ) : (
+                  <button
+                    onClick={() => onEditCapture(cap.id)}
+                    style={styles.editBtn}
+                    title="Edit this capture"
+                  >
+                    ✏ Edit
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </aside>
   );
@@ -227,9 +246,10 @@ const styles = {
   },
   card: {
     background: theme.surface,
-    border: `1px solid ${theme.border}`,
+    border: "1px solid",
     borderRadius: 8,
     padding: "12px 14px",
+    transition: "opacity 0.15s ease, border-color 0.15s ease",
   },
   cardLabel: {
     fontSize: 10,
@@ -250,5 +270,30 @@ const styles = {
     fontSize: 12,
     color: theme.textMuted,
     lineHeight: 1.5,
+    marginBottom: 8,
+  },
+  cardActions: {
+    display: "flex",
+    justifyContent: "flex-end",
+    marginTop: 4,
+  },
+  editBtn: {
+    background: "transparent",
+    border: `1px solid ${theme.border}`,
+    borderRadius: 6,
+    color: theme.textMuted,
+    padding: "4px 10px",
+    fontSize: 11,
+    fontWeight: 600,
+    cursor: "pointer",
+    fontFamily: "'DM Sans', sans-serif",
+  },
+  editingTag: {
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: 1,
+    color: theme.red,
+    textTransform: "uppercase",
+    fontStyle: "italic",
   },
 };
