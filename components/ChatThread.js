@@ -9,6 +9,7 @@ export default function ChatThread({
   emptyState,
   inlineActions,
   disabled,
+  hideInput,
 }) {
   const [input, setInput] = useState("");
   const scrollRef = useRef(null);
@@ -18,7 +19,7 @@ export default function ChatThread({
   }, [messages, loading, inlineActions]);
 
   const handleSend = () => {
-    if (disabled) return;
+    if (disabled || hideInput) return;
     if (!input.trim() || loading) return;
     onSend(input.trim());
     setInput("");
@@ -65,34 +66,37 @@ export default function ChatThread({
           </div>
         )}
       </div>
-      <div style={styles.inputArea}>
-        <textarea
-          style={{ ...styles.input, opacity: disabled ? 0.5 : 1, cursor: disabled ? "not-allowed" : "text" }}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              handleSend();
-            }
-          }}
-          placeholder={placeholder || "Type your response..."}
-          rows={2}
-          disabled={disabled}
-        />
-        <button
-          onClick={handleSend}
-          disabled={sendDisabled}
-          style={{
-            ...styles.sendBtn,
-            opacity: sendDisabled ? 0.4 : 1,
-            cursor: sendDisabled ? "not-allowed" : "pointer",
-          }}
-          title={disabled ? "Finish editing the capture first" : ""}
-        >
-          Send
-        </button>
-      </div>
+
+      {!hideInput && (
+        <div style={styles.inputArea}>
+          <textarea
+            style={{ ...styles.input, opacity: disabled ? 0.5 : 1, cursor: disabled ? "not-allowed" : "text" }}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            placeholder={placeholder || "Type your response..."}
+            rows={2}
+            disabled={disabled}
+          />
+          <button
+            onClick={handleSend}
+            disabled={sendDisabled}
+            style={{
+              ...styles.sendBtn,
+              opacity: sendDisabled ? 0.4 : 1,
+              cursor: sendDisabled ? "not-allowed" : "pointer",
+            }}
+            title={disabled ? "Finish editing the capture first" : ""}
+          >
+            Send
+          </button>
+        </div>
+      )}
     </div>
   );
 }
