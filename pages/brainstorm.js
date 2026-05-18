@@ -147,15 +147,13 @@ content: A 2-3 sentence summary in the inventor's voice, suitable for a sidebar 
 
 The marker MUST use type: ${currentPhase === "intake" || currentPhase === "brief" ? "insight (or omit — see phase guidance)" : currentPhase}. Any other type is invalid and will be ignored.
 
-The user sees your conversational response, then an inline "Capture this?" card with buttons. If they say Yes, the capture lands in the sidebar and you'll be moved to the next phase.
-
 If you've ALREADY proposed a capture this turn (it's in the conversation history above) but the user is still asking questions or pushing back, do NOT propose it again. Engage with their pushback in normal prose.
 
 ══════════════════════════════════════════════════════════════
 SPECIAL CASE — INSIGHT CAPTURES
 ══════════════════════════════════════════════════════════════
 
-If the inventor reveals something durable and worth preserving that doesn't fit the main phase (a specific technical insight, a constraint, a personal context that shapes the work), you may propose:
+If the inventor reveals something durable and worth preserving that doesn't fit the main phase, you may propose:
 
 [CAPTURE_PROPOSED]
 type: insight
@@ -163,7 +161,7 @@ title: ...
 content: ...
 [/CAPTURE_PROPOSED]
 
-These don't advance the phase. Use sparingly — once per session at most.
+These don't advance the phase. Use sparingly.
 
 ══════════════════════════════════════════════════════════════
 LANE AWARENESS
@@ -179,9 +177,51 @@ STYLE
 - Warm, direct, never condescending. Acknowledge insight specifically when it appears.
 - Ask one good question at a time, not three.
 - Use the inventor's handle naturally, not every message.
-- When you propose a capture, write the conversational response first, then the marker. Don't preface the marker with "I'll capture this:" or similar — just write naturally and end with the marker block.
+- When you propose a capture, write the conversational response first, then the marker.
 
 Continue the conversation now, working in the ${currentPhase.toUpperCase()} phase as described above.`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CAPTURE REVISION PROMPT
+// Used when the user provides AI instructions during capture editing.
+// ─────────────────────────────────────────────────────────────────────────────
+function buildRevisionPrompt({ captureType, originalTitle, originalContent, userEditedTitle, userEditedContent, instructions }) {
+  return `You are helping an inventor revise a previously-captured artifact in their Brainstorm session. The artifact is a ${captureType.toUpperCase()} capture.
+
+ORIGINAL CAPTURE
+Title: ${originalTitle}
+Content: ${originalContent}
+
+USER'S CURRENT DRAFT (they may have already made manual edits)
+Title: ${userEditedTitle}
+Content: ${userEditedContent}
+
+USER'S INSTRUCTIONS FOR REVISION
+${instructions}
+
+Your job: produce a revised version that honors the user's manual edits and applies their instructions. Output the revised version using EXACTLY this format, with no other text:
+
+[REVISION]
+title: A revised title (5-12 words, headline style)
+content: A revised content paragraph (2-3 sentences, in the inventor's voice, suitable for a sidebar card)
+[/REVISION]
+
+Do NOT include any other commentary. Do NOT explain your changes. Just the marker block.`;
+}
+
+function parseRevisionMarker(text) {
+  if (!text) return null;
+  const match = text.match(/\[REVISION\]([\s\S]*?)\[\/REVISION\]/);
+  if (!match) return null;
+  const block = match[1];
+  const titleMatch   = block.match(/title:\s*(.+)/i);
+  const contentMatch = block.match(/content:\s*([\s\S]+?)(?=\n\s*(?:title|type):|$)/i);
+  if (!titleMatch || !contentMatch) return null;
+  return {
+    title:   titleMatch[1].trim(),
+    content: contentMatch[1].trim(),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -192,30 +232,28 @@ function buildTransitionPrompt({ handle, fromPhase, toPhase, capturedTitle, capt
     explore: `The problem has just been captured. Now you're moving into the EXPLORE phase — root causes, failed prior attempts, hidden assumptions, ripple effects. Write a short message (2 short paragraphs max) that:
 1. Briefly acknowledges what was just captured.
 2. Names the shift: "Now let's dig into why this happens" or similar.
-3. Asks one good opening question about root causes — what's been tried before, what assumptions everyone makes, who else is affected that isn't obvious.
+3. Asks one good opening question about root causes.
 
-Do NOT propose a capture in this message. Do NOT include the [CAPTURE_PROPOSED] marker.`,
+Do NOT propose a capture in this message.`,
 
-    ideate: `The exploration has just been captured. Now you're moving into the IDEATE phase — brainstorming solutions. Write a short message (2-3 short paragraphs max) that:
+    ideate: `The exploration has just been captured. Now you're moving into the IDEATE phase. Write a short message (2-3 short paragraphs max) that:
 1. Briefly acknowledges what was just captured.
-2. Names the shift: "Now we're going to brainstorm some solutions" or similar.
-3. Proposes 3-4 candidate solution directions across a range — practical, ambitious, cross-industry/analogical, and one moonshot. Make them concrete, not abstract.
+2. Names the shift.
+3. Proposes 3-4 candidate solution directions across a range — practical, ambitious, cross-industry, and one moonshot.
 4. Asks which one resonates.
 
-Do NOT propose a capture in this message. Do NOT include the [CAPTURE_PROPOSED] marker.`,
+Do NOT propose a capture in this message.`,
 
-    refine: `The brainstorming has just been captured. Now you're moving into the REFINE phase — picking the strongest idea and making it concrete. Write a short message (2 short paragraphs max) that:
+    refine: `The brainstorming has just been captured. Now you're moving into the REFINE phase. Write a short message (2 short paragraphs max) that:
 1. Briefly acknowledges what was just captured.
-2. Names the shift: "Now let's take the strongest of these and make it real" or similar.
-3. Asks the inventor which idea felt strongest and starts pushing for specifics — components, materials, mechanisms.
+2. Names the shift.
+3. Asks the inventor which idea felt strongest and starts pushing for specifics.
 
-Do NOT propose a capture in this message. Do NOT include the [CAPTURE_PROPOSED] marker.`,
+Do NOT propose a capture in this message.`,
 
     brief: `The refined invention has just been captured. The inventor will see a "Synthesize Invention Brief" button next. Write a short message (1-2 short paragraphs) that:
 1. Acknowledges the refinement.
-2. Tells the inventor they can synthesize the full Invention Brief whenever they're ready, or keep refining if they want.
-
-Do NOT propose a capture in this message.`,
+2. Tells the inventor they can synthesize the full Invention Brief whenever they're ready, or keep refining if they want.`,
   };
 
   const instruction = opener[toPhase] || `Acknowledge the capture briefly and continue the conversation in the ${toPhase} phase.`;
@@ -259,7 +297,7 @@ function parseCaptureMarker(text) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EXPORT — unified-chat .docx (takes a specific brief version if provided)
+// EXPORT — unified-chat .docx
 // ─────────────────────────────────────────────────────────────────────────────
 async function exportToDocx(project, handle, selectedBrief) {
   const { name, data } = project;
@@ -408,6 +446,50 @@ async function exportToDocx(project, handle, selectedBrief) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TYPED-DELETE MODAL
+// ─────────────────────────────────────────────────────────────────────────────
+function TypedDeleteModal({ open, itemLabel, itemName, onConfirm, onCancel }) {
+  const [typed, setTyped] = useState("");
+
+  useEffect(() => {
+    if (open) setTyped("");
+  }, [open]);
+
+  if (!open) return null;
+
+  const canDelete = typed.trim().toUpperCase() === "DELETE";
+
+  return (
+    <div style={tdm.backdrop} onClick={onCancel}>
+      <div style={tdm.modal} onClick={(e) => e.stopPropagation()}>
+        <h2 style={tdm.title}>Delete {itemLabel}?</h2>
+        <p style={tdm.body}>
+          You're about to permanently delete <strong>{itemName}</strong>. This can't
+          be undone. To confirm, type <strong>DELETE</strong> in the field below.
+        </p>
+        <input
+          style={tdm.input}
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          placeholder="Type DELETE to confirm"
+          autoFocus
+        />
+        <div style={tdm.actions}>
+          <button onClick={onCancel} style={tdm.cancelBtn}>Cancel</button>
+          <button
+            onClick={onConfirm}
+            disabled={!canDelete}
+            style={{ ...tdm.confirmBtn, opacity: canDelete ? 1 : 0.4, cursor: canDelete ? "pointer" : "not-allowed" }}
+          >
+            Delete permanently
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // LEGACY PROJECT VIEW
 // ─────────────────────────────────────────────────────────────────────────────
 function LegacyView({ project, onBack, onDelete }) {
@@ -421,8 +503,7 @@ function LegacyView({ project, onBack, onDelete }) {
       </div>
       <div style={lv.notice}>
         This project was created before the unified-chat rewrite. It's read-only —
-        the new architecture creates projects in a different shape. If you'd like to
-        continue the work, copy what you need and start a fresh project.
+        the new architecture creates projects in a different shape.
       </div>
       <div style={lv.body}>
         {data.field && <p><strong>Field:</strong> {data.field}</p>}
@@ -515,6 +596,7 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle, onOpenLegacy }) 
   const [projects, setProjects] = useState([]);
   const [newName,  setNewName]  = useState("");
   const [loading,  setLoading]  = useState(true);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   useEffect(() => { fetchProjects(); }, []);
 
@@ -548,10 +630,13 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle, onOpenLegacy }) 
     onNew(project);
   };
 
-  const handleDelete = async (id, name) => {
-    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
-    await supabase.from(TABLE).delete().eq("id", id);
-    setProjects((p) => p.filter((x) => x.id !== id));
+  const requestDelete = (id, name) => setDeleteTarget({ id, name });
+  const cancelDelete = () => setDeleteTarget(null);
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    await supabase.from(TABLE).delete().eq("id", deleteTarget.id);
+    setProjects((p) => p.filter((x) => x.id !== deleteTarget.id));
+    setDeleteTarget(null);
   };
 
   const handleRename = async (id) => {
@@ -609,7 +694,7 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle, onOpenLegacy }) 
                   <button onClick={() => onResume(p)} style={db.resumeBtn}>Resume →</button>
                 )}
                 <button onClick={() => handleRename(p.id)} style={db.iconBtn} title="Rename">✏</button>
-                <button onClick={() => handleDelete(p.id, p.name)} style={db.iconBtn} title="Delete">✕</button>
+                <button onClick={() => requestDelete(p.id, p.name)} style={db.iconBtn} title="Delete">✕</button>
               </div>
             </div>
           ))}
@@ -619,12 +704,114 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle, onOpenLegacy }) 
       {!loading && projects.length === 0 && (
         <div style={db.empty}>No saved projects yet. Start your first invention above.</div>
       )}
+
+      <TypedDeleteModal
+        open={!!deleteTarget}
+        itemLabel="this project"
+        itemName={deleteTarget?.name || ""}
+        onConfirm={confirmDelete}
+        onCancel={cancelDelete}
+      />
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BRIEF VIEW — version dropdown, editable label, staleness notice, synth button
+// CAPTURE EDIT PANEL
+// Anchored below ChatThread when a capture is being edited.
+// ─────────────────────────────────────────────────────────────────────────────
+function CaptureEditPanel({ capture, onCancel, onSave }) {
+  const [title, setTitle] = useState(capture.title);
+  const [content, setContent] = useState(capture.content);
+  const [instructions, setInstructions] = useState("");
+  const [working, setWorking] = useState(false);
+
+  // Detect whether user manually changed anything in title or content
+  const manuallyChanged =
+    title.trim() !== capture.title.trim() ||
+    content.trim() !== capture.content.trim();
+
+  const hasInstructions = instructions.trim().length > 0;
+
+  // Submit button label varies based on what's filled in
+  const submitLabel = !manuallyChanged && !hasInstructions
+    ? "Make a change first"
+    : hasInstructions
+    ? "Generate revised version →"
+    : "Save changes →";
+
+  const canSubmit = manuallyChanged || hasInstructions;
+
+  const handleSubmit = async () => {
+    if (!canSubmit || working) return;
+    setWorking(true);
+    await onSave({
+      title: title.trim(),
+      content: content.trim(),
+      instructions: instructions.trim(),
+      manuallyChanged,
+      hasInstructions,
+    });
+    setWorking(false);
+  };
+
+  return (
+    <div style={cep.wrap}>
+      <div style={cep.header}>
+        <span style={cep.headerLabel}>EDITING: {capture.type.toUpperCase()}</span>
+        <button onClick={onCancel} style={cep.cancelTopBtn}>✕ Close editor</button>
+      </div>
+
+      <p style={cep.instructions}>
+        Edit the text directly below, tell me what you'd like to change in the AI input, or both.
+        When you hit submit, I'll show you the revised version to approve.
+      </p>
+
+      <label style={cep.label}>Title</label>
+      <input
+        style={cep.input}
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        disabled={working}
+      />
+
+      <label style={cep.label}>Content</label>
+      <textarea
+        style={cep.textarea}
+        value={content}
+        onChange={(e) => setContent(e.target.value)}
+        rows={5}
+        disabled={working}
+      />
+
+      <label style={cep.label}>Tell the AI what to change (optional)</label>
+      <textarea
+        style={cep.aiInput}
+        value={instructions}
+        onChange={(e) => setInstructions(e.target.value)}
+        placeholder="e.g. add a sentence about how this affects elderly users, or make the tone less clinical"
+        rows={2}
+        disabled={working}
+      />
+
+      <div style={cep.actions}>
+        <button onClick={onCancel} style={cep.cancelBtn} disabled={working}>
+          Cancel
+        </button>
+        <button
+          onClick={handleSubmit}
+          disabled={!canSubmit || working}
+          style={{ ...cep.submitBtn, opacity: (!canSubmit || working) ? 0.4 : 1, cursor: (!canSubmit && !working) ? "not-allowed" : "pointer" }}
+        >
+          {working ? "Working…" : submitLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BRIEF VIEW
 // ─────────────────────────────────────────────────────────────────────────────
 function BriefView({
   briefs,
@@ -655,12 +842,10 @@ function BriefView({
     setLabelDraft(selected.label || "");
     setEditingLabel(true);
   };
-
   const commitLabel = () => {
     onRenameBrief(selected.id, labelDraft.trim());
     setEditingLabel(false);
   };
-
   const cancelLabel = () => {
     setEditingLabel(false);
     setLabelDraft("");
@@ -693,8 +878,7 @@ function BriefView({
             </div>
           )}
           <p style={bv.meta}>
-            Version {selected.versionNumber} ·{" "}
-            {new Date(selected.createdAt).toLocaleString()}
+            Version {selected.versionNumber} · {new Date(selected.createdAt).toLocaleString()}
             {isLatest && <span style={bv.latestTag}>LATEST</span>}
           </p>
         </div>
@@ -738,11 +922,7 @@ function BriefView({
         </button>
         <button onClick={onTakeToForge} style={bv.forgeBtn}>Take to Patent Forge →</button>
         {briefs.length > 1 && (
-          <button
-            onClick={() => onDeleteBrief(selected.id)}
-            style={bv.deleteBtn}
-            title="Delete this brief version"
-          >
+          <button onClick={() => onDeleteBrief(selected.id)} style={bv.deleteBtn} title="Delete this brief version">
             Delete version
           </button>
         )}
@@ -751,10 +931,7 @@ function BriefView({
       {!isLatest && (
         <p style={bv.viewingOlderNote}>
           You're viewing an older brief version. The latest is{" "}
-          <button
-            onClick={() => setSelectedBriefId(briefs[briefs.length - 1].id)}
-            style={bv.linkBtn}
-          >
+          <button onClick={() => setSelectedBriefId(briefs[briefs.length - 1].id)} style={bv.linkBtn}>
             {briefDisplayName(briefs[briefs.length - 1])}
           </button>.
         </p>
@@ -785,13 +962,10 @@ export default function BrainstormPage() {
   const [briefs,         setBriefs]         = useState([]);
   const [selectedBriefId, setSelectedBriefId] = useState(null);
   const [pendingCapture, setPendingCapture] = useState(null);
-
-  // Tracks last captures-state at the moment the latest brief was synthesized
+  const [pendingRevision, setPendingRevision] = useState(null); // { captureId, title, content }
+  const [editingCaptureId, setEditingCaptureId] = useState(null);
   const [capturesSnapshotIds, setCapturesSnapshotIds] = useState(null);
-
-  // Left column tab: "chat" | "brief"
   const [activeTab, setActiveTab] = useState("chat");
-
   const [chatLoading, setChatLoading] = useState(false);
   const [synthesizing, setSynthesizing] = useState(false);
   const [saving,      setSaving]      = useState(false);
@@ -940,16 +1114,10 @@ export default function BrainstormPage() {
 
   const generatePhaseOpener = async (fromPhase, toPhase, capturedTitle, capturedContent, currentMessages) => {
     if (!toPhase || toPhase === fromPhase) return null;
-
     try {
       const transitionSystem = buildTransitionPrompt({
-        handle,
-        fromPhase,
-        toPhase,
-        capturedTitle,
-        capturedContent,
+        handle, fromPhase, toPhase, capturedTitle, capturedContent,
       });
-
       const recent = currentMessages
         .filter((m) => m.role === "user" || m.role === "assistant")
         .slice(-6)
@@ -964,7 +1132,6 @@ export default function BrainstormPage() {
           max_tokens: 600,
         }),
       });
-
       const result = await res.json();
       const text = result.content?.map((i) => (i.type === "text" ? i.text : "")).join("\n") || "";
       return text.replace(/\[CAPTURE_PROPOSED\][\s\S]*?\[\/CAPTURE_PROPOSED\]/g, "").trim();
@@ -1018,6 +1185,87 @@ export default function BrainstormPage() {
 
   const dismissCapture = () => setPendingCapture(null);
 
+  // ── Capture editing flow ────────────────────────────────────────────────
+  const startEditingCapture = (captureId) => {
+    setEditingCaptureId(captureId);
+    setPendingCapture(null);
+    setPendingRevision(null);
+  };
+
+  const cancelEditingCapture = () => {
+    setEditingCaptureId(null);
+    setPendingRevision(null);
+  };
+
+  const handleEditSubmit = async ({ title, content, instructions, manuallyChanged, hasInstructions }) => {
+    if (!editingCaptureId) return;
+    const capture = captures.find((c) => c.id === editingCaptureId);
+    if (!capture) return;
+
+    // Fast path: manual edits only, no AI instructions → save directly
+    if (manuallyChanged && !hasInstructions) {
+      const updated = { ...capture, title, content, updatedAt: new Date().toISOString() };
+      setCaptures((prev) => prev.map((c) => (c.id === capture.id ? updated : c)));
+      setEditingCaptureId(null);
+      setPendingRevision(null);
+      return;
+    }
+
+    // AI path: call API with instructions, show pending revision card
+    try {
+      const revSystem = buildRevisionPrompt({
+        captureType: capture.type,
+        originalTitle: capture.title,
+        originalContent: capture.content,
+        userEditedTitle: title,
+        userEditedContent: content,
+        instructions,
+      });
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system: revSystem,
+          messages: [{ role: "user", content: "Produce the revision now." }],
+          max_tokens: 600,
+        }),
+      });
+      const result = await res.json();
+      const text = result.content?.map((i) => (i.type === "text" ? i.text : "")).join("\n") || "";
+      const revision = parseRevisionMarker(text);
+      if (revision) {
+        setPendingRevision({
+          captureId: capture.id,
+          title: revision.title,
+          content: revision.content,
+        });
+      } else {
+        // AI didn't return a valid marker — fall back to saving manual edits if any
+        if (manuallyChanged) {
+          const updated = { ...capture, title, content, updatedAt: new Date().toISOString() };
+          setCaptures((prev) => prev.map((c) => (c.id === capture.id ? updated : c)));
+          setEditingCaptureId(null);
+        }
+      }
+    } catch {
+      // Silently fail; editor stays open for retry
+    }
+  };
+
+  const approveRevision = () => {
+    if (!pendingRevision) return;
+    setCaptures((prev) => prev.map((c) => (
+      c.id === pendingRevision.captureId
+        ? { ...c, title: pendingRevision.title, content: pendingRevision.content, updatedAt: new Date().toISOString() }
+        : c
+    )));
+    setPendingRevision(null);
+    setEditingCaptureId(null);
+  };
+
+  const rejectRevision = () => setPendingRevision(null);
+
+  // ── Brief synthesis & versioning ────────────────────────────────────────
   const synthesizeNewBriefVersion = async () => {
     setSynthesizing(true);
     try {
@@ -1082,9 +1330,7 @@ This Invention Brief is ready to be taken into Patent Forge.`,
       setCapturesSnapshotIds(newBrief.capturesSnapshotIds);
       setCurrentPhase("brief");
       setActiveTab("brief");
-    } catch {
-      // Silently fail; user can retry
-    } finally {
+    } catch {} finally {
       setSynthesizing(false);
     }
   };
@@ -1139,10 +1385,11 @@ This Invention Brief is ready to be taken into Patent Forge.`,
     setActiveTab("chat");
     setContinuationFired(false);
     setPendingCapture(null);
+    setEditingCaptureId(null);
+    setPendingRevision(null);
     setView("session");
   };
 
-  // Migrate old data shape on load: data.inventionBrief (string) → data.briefs (array)
   const migrateBriefs = (d) => {
     if (Array.isArray(d.briefs)) return d.briefs;
     if (typeof d.inventionBrief === "string" && d.inventionBrief.trim()) {
@@ -1170,21 +1417,20 @@ This Invention Brief is ready to be taken into Patent Forge.`,
     setBriefs(migratedBriefs);
     setSelectedBriefId(d.selectedBriefId || (migratedBriefs.length > 0 ? migratedBriefs[migratedBriefs.length - 1].id : null));
     setCapturesSnapshotIds(migratedBriefs.length > 0 ? migratedBriefs[migratedBriefs.length - 1].capturesSnapshotIds : null);
-    setActiveTab("chat"); // Continuation default: drop them back into the chat
+    setActiveTab("chat");
     setContinuationFired(false);
     setPendingCapture(null);
+    setEditingCaptureId(null);
+    setPendingRevision(null);
     setView("session");
   };
 
-  // Continuation re-entry: if there's at least one brief, append a fresh AI greeting
-  // when the user re-opens the project. Fires once per resume.
   useEffect(() => {
     if (view !== "session") return;
     if (continuationFired) return;
     if (briefs.length === 0) return;
     if (messages.length === 0) return;
 
-    // Only fire if the most recent message is NOT already an AI continuation greeting
     const lastMsg = messages[messages.length - 1];
     if (lastMsg?.role === "assistant" && lastMsg?.isContinuation) return;
 
@@ -1221,6 +1467,8 @@ What would you like to revisit? We can revise any of the captures, dig deeper on
     setActiveTab("chat");
     setContinuationFired(false);
     setPendingCapture(null);
+    setEditingCaptureId(null);
+    setPendingRevision(null);
   };
 
   const handleDeleteLegacy = async (id, name) => {
@@ -1253,7 +1501,6 @@ What would you like to revisit? We can revise any of the captures, dig deeper on
     }]);
   };
 
-  // Compute staleness: are current captures different from those when the latest brief was generated?
   const computeStaleness = () => {
     if (briefs.length === 0) return false;
     const latest = briefs[briefs.length - 1];
@@ -1309,7 +1556,6 @@ What would you like to revisit? We can revise any of the captures, dig deeper on
   const capturesStale = computeStaleness();
   const canSynthesizeFirst = captures.some((c) => c.type === "refine") && !hasBrief;
 
-  // Build the messages array we'll feed to ChatThread.
   const displayMessages = [];
   const inlineActions = [];
 
@@ -1357,6 +1603,8 @@ What would you like to revisit? We can revise any of the captures, dig deeper on
     }
   }
 
+  const editingCapture = editingCaptureId ? captures.find((c) => c.id === editingCaptureId) : null;
+
   return (
     <Layout title="Brainstorm" logoSrc="/brainstorm-logo.png">
       <div style={pg.header}>
@@ -1375,11 +1623,7 @@ What would you like to revisit? We can revise any of the captures, dig deeper on
       <div style={pg.twoCol}>
         <div style={pg.leftCol}>
           {showIntake ? (
-            <IntakePhase
-              handle={handle}
-              profileSummary={profileSummary}
-              onStart={handleStartConversation}
-            />
+            <IntakePhase handle={handle} profileSummary={profileSummary} onStart={handleStartConversation} />
           ) : (
             <>
               {hasBrief && (
@@ -1408,9 +1652,33 @@ What would you like to revisit? We can revise any of the captures, dig deeper on
                     placeholder="Type a message…"
                     inlineActions={inlineActions}
                   />
-                  {canSynthesizeFirst && (
-                    <div style={pg.synthBar}>
-                      <p style={pg.synthText}>Ready to synthesize what we have into an Invention Brief?</p>
+
+                  {editingCapture && (
+                    <CaptureEditPanel
+                      capture={editingCapture}
+                      onCancel={cancelEditingCapture}
+                      onSave={handleEditSubmit}
+                    />
+                  )}
+
+                  {pendingRevision && (
+                    <div style={rev.wrap}>
+                      <div style={rev.head}>REVISED VERSION — REVIEW</div>
+                      <div style={rev.title}>{pendingRevision.title}</div>
+                      <div style={rev.content}>{pendingRevision.content}</div>
+                      <div style={rev.actions}>
+                        <button onClick={approveRevision} style={rev.approveBtn}>Approve revision</button>
+                        <button onClick={rejectRevision} style={rev.rejectBtn}>Keep editing</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {canSynthesizeFirst && !editingCapture && (
+                    <div style={pg.reviewBar}>
+                      <p style={pg.reviewText}>
+                        <strong>Take a moment to review your captures in the sidebar.</strong> Click ✏ Edit on any
+                        card to revise. When you're happy with everything, synthesize the Brief.
+                      </p>
                       <button
                         onClick={synthesizeNewBriefVersion}
                         disabled={synthesizing}
@@ -1420,7 +1688,8 @@ What would you like to revisit? We can revise any of the captures, dig deeper on
                       </button>
                     </div>
                   )}
-                  {hasBrief && (
+
+                  {hasBrief && !editingCapture && (
                     <div style={pg.synthBar}>
                       <p style={pg.synthText}>
                         {capturesStale
@@ -1466,6 +1735,8 @@ What would you like to revisit? We can revise any of the captures, dig deeper on
               brief,
             );
           }}
+          onEditCapture={startEditingCapture}
+          editingCaptureId={editingCaptureId}
           saving={saving}
           justSaved={justSaved}
         />
@@ -1535,6 +1806,8 @@ const pg = {
   synthBar: { borderTop: `1px solid ${theme.border}`, padding: "12px 0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" },
   synthText: { fontSize: 13, color: theme.textMuted, margin: 0 },
   synthBtn: { background: theme.red, border: "none", borderRadius: 7, color: "#fff", padding: "9px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  reviewBar: { borderTop: `1px solid ${theme.border}`, padding: "16px 0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" },
+  reviewText: { fontSize: 13, color: theme.textMuted, margin: 0, lineHeight: 1.6, flex: 1, minWidth: 280 },
 };
 
 const tabs = {
@@ -1552,6 +1825,31 @@ const cc = {
   cardButtons: { display: "flex", gap: 8 },
   approveBtn: { background: theme.red, border: "none", borderRadius: 6, color: "#fff", padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   dismissBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "7px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+};
+
+const cep = {
+  wrap: { background: theme.surface, border: `1px solid ${theme.red}`, borderRadius: 10, padding: "16px 18px", marginBottom: 16, marginTop: 8, borderLeft: `4px solid ${theme.red}` },
+  header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+  headerLabel: { fontSize: 11, fontWeight: 700, letterSpacing: 2, color: theme.red, textTransform: "uppercase" },
+  cancelTopBtn: { background: "transparent", border: "none", color: theme.textDim, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  instructions: { fontSize: 12, color: theme.textMuted, lineHeight: 1.6, marginBottom: 12, marginTop: 0 },
+  label: { display: "block", fontSize: 11, fontWeight: 700, color: theme.textMuted, marginBottom: 4, marginTop: 10, textTransform: "uppercase", letterSpacing: 1 },
+  input: { width: "100%", background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, padding: "8px 12px", fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box" },
+  textarea: { width: "100%", background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, padding: "8px 12px", fontSize: 13, fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.5 },
+  aiInput: { width: "100%", background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, padding: "8px 12px", fontSize: 13, fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box", resize: "vertical", fontStyle: "italic" },
+  actions: { display: "flex", gap: 8, marginTop: 14, justifyContent: "flex-end" },
+  cancelBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "8px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  submitBtn: { background: theme.red, border: "none", borderRadius: 6, color: "#fff", padding: "8px 16px", fontSize: 12, fontWeight: 700, fontFamily: "'DM Sans', sans-serif" },
+};
+
+const rev = {
+  wrap: { background: theme.surface, border: `1px solid ${theme.red}`, borderRadius: 10, padding: "14px 18px", marginBottom: 16, marginTop: 8 },
+  head: { fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: theme.red, textTransform: "uppercase", marginBottom: 8 },
+  title: { fontSize: 14, fontWeight: 700, color: theme.text, marginBottom: 6 },
+  content: { fontSize: 13, color: theme.textMuted, lineHeight: 1.6, marginBottom: 14 },
+  actions: { display: "flex", gap: 8 },
+  approveBtn: { background: theme.red, border: "none", borderRadius: 6, color: "#fff", padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  rejectBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "8px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
 };
 
 const dv = {
@@ -1585,6 +1883,17 @@ const bv = {
   deleteBtn: { padding: "10px 14px", background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.textDim, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   viewingOlderNote: { fontSize: 12, color: theme.textDim, marginTop: 16, fontStyle: "italic" },
   linkBtn: { background: "transparent", border: "none", color: theme.red, fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0, fontFamily: "'DM Sans', sans-serif", textDecoration: "underline" },
+};
+
+const tdm = {
+  backdrop: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, zIndex: 100 },
+  modal: { background: "#1a1a1a", border: `1px solid ${theme.border}`, borderRadius: 14, padding: 28, width: "100%", maxWidth: 420 },
+  title: { fontFamily: "'Playfair Display', serif", fontSize: 20, fontWeight: 700, color: theme.text, marginBottom: 10, marginTop: 0 },
+  body: { fontSize: 14, color: theme.textMuted, lineHeight: 1.6, marginBottom: 16 },
+  input: { width: "100%", background: "#0a0a0a", border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.text, padding: "10px 14px", fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box", textTransform: "uppercase", letterSpacing: 2 },
+  actions: { display: "flex", gap: 10, marginTop: 16, justifyContent: "flex-end" },
+  cancelBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.textMuted, padding: "10px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  confirmBtn: { background: theme.red, border: "none", borderRadius: 8, color: "#fff", padding: "10px 18px", fontSize: 13, fontWeight: 700, fontFamily: "'DM Sans', sans-serif" },
 };
 
 const ip = {
