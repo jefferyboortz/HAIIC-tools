@@ -63,7 +63,7 @@ function NoveltyAdvisor({ data, context, onSave }) {
   );
 }
 
-function ProjectDashboard({ onNew, onResume, onSignOut, handle }) {
+function ProjectDashboard({ onNew, onResume, onSignOut, handle, isFirstTimeUser }) {
   const [projects, setProjects] = useState([]); const [newName, setNewName] = useState(""); const [loading, setLoading] = useState(true); const [handoff, setHandoff] = useState(null);
   useEffect(() => { fetchProjects(); try { const h = localStorage.getItem(HANDOFF_KEY); if (h) setHandoff(JSON.parse(h)); } catch {} }, []);
   const fetchProjects = async () => { setLoading(true); const { data } = await supabase.from(TABLE).select("*").order("updated_at", { ascending: false }); setProjects(data || []); setLoading(false); };
@@ -76,6 +76,17 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle }) {
     <div style={ps.content}>
       <div style={db.topRow}><h2 style={ps.title}>Your Patent Applications</h2><div style={db.userRow}><span style={db.userHandle}>{handle}</span><button onClick={onSignOut} style={db.signOutBtn}>Sign Out</button></div></div>
       <p style={ps.desc}>Each application saves automatically — resume from any device, any time.</p>
+
+      {isFirstTimeUser && !handoff && (
+        <div style={wb.banner}>
+          <div style={wb.icon}>👋</div>
+          <div style={wb.body}>
+            <div style={wb.title}>Welcome to Patent Forge, {handle}.</div>
+            <div style={wb.text}>Ready to draft your first provisional patent application? Start a new project below — you'll walk through each section with AI guidance, save automatically, and end up with a USPTO-ready filing package.</div>
+          </div>
+        </div>
+      )}
+
       {handoff && (<div style={hf.banner}><div style={hf.bannerLeft}><div style={hf.bannerTitle}>🔗 Brainstorm session ready to continue</div><div style={hf.bannerMeta}>"{handoff.name}" — title, field, and brief pre-filled.</div></div><div style={hf.bannerRight}><button onClick={handleHandoff} style={hf.continueBtn}>Continue in Patent Forge →</button><button onClick={() => { try { localStorage.removeItem(HANDOFF_KEY); } catch {} setHandoff(null); }} style={hf.dismissBtn}>Dismiss</button></div></div>)}
       <div style={db.newRow}><input style={{ ...ps.input, flex: 1, marginTop: 0 }} value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleNew()} placeholder="Name your invention (optional)..." /><button onClick={handleNew} style={ps.nextBtn}>Start New Application →</button></div>
       {loading && <p style={{ color: theme.textMuted, fontSize: 14 }}>Loading your applications…</p>}
@@ -85,26 +96,66 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle }) {
   );
 }
 
-function InventorSection({ data, setData, onNext }) {
-  const [name, setName] = useState(data.inventorName || ""); const [city, setCity] = useState(data.city || ""); const [state, setState] = useState(data.state || ""); const [country, setCountry] = useState(data.country || "United States"); const [email, setEmail] = useState(data.email || "");
-  const canProceed = name.trim() && city.trim() && state.trim();
+function StickyActionBar({ children, justSaved }) {
   return (
-    <div style={ps.content}>
-      <h2 style={ps.title}>Inventor Information</h2>
-      <p style={ps.desc}>This is who will be named on the provisional patent application.</p>
-      {data.fromBrainstorm && <div style={hf.infoBar}>💡 Your Brainstorm session has been pre-loaded — title, field, and brief are ready in the next steps.</div>}
-      <label style={ps.label}>Full Legal Name</label><input style={ps.input} value={name} onChange={e => setName(e.target.value)} placeholder="e.g., Jane M. Smith" />
-      <label style={ps.label}>City</label><input style={ps.input} value={city} onChange={e => setCity(e.target.value)} placeholder="e.g., Decatur" />
-      <label style={ps.label}>State / Province</label><input style={ps.input} value={state} onChange={e => setState(e.target.value)} placeholder="e.g., Georgia" />
-      <label style={ps.label}>Country</label><input style={ps.input} value={country} onChange={e => setCountry(e.target.value)} />
-      <label style={ps.label}>Email (optional)</label><input style={ps.input} value={email} onChange={e => setEmail(e.target.value)} placeholder="For filing correspondence" />
-      <button onClick={() => { setData({ ...data, inventorName: name, city, state, country, email }); onNext(); }} disabled={!canProceed} style={{ ...ps.nextBtn, opacity: canProceed ? 1 : 0.4, cursor: canProceed ? "pointer" : "not-allowed" }}>Next: Our Vision →</button>
+    <div style={ps.stickyBar}>
+      {justSaved && <span style={ps.savedInline}>✓ Saved</span>}
+      <div style={ps.stickyBarRight}>{children}</div>
     </div>
   );
 }
 
-function AgreementSection({ data, setData, onNext }) {
-  const [agreed, setAgreed] = useState(data.agreed || false);
+function InventorSection({ data, setData, onNext, profileName, profileCity, profileState, profileCountry, profileEmail, justSaved }) {
+  const [name, setName]       = useState(data.inventorName || profileName || "");
+  const [city, setCity]       = useState(data.city || profileCity || "");
+  const [stateVal, setStateVal] = useState(data.state || profileState || "");
+  const [country, setCountry] = useState(data.country || profileCountry || "United States");
+  const [email, setEmail]     = useState(data.email || profileEmail || "");
+  const canProceed = name.trim() && city.trim() && stateVal.trim();
+  const greetingLine = profileName && !data.inventorName ? `Drafting on behalf of ${profileName}? We've pre-filled what we know — adjust anything that needs adjusting.` : null;
+
+  return (
+    <div style={ps.content}>
+      <h2 style={ps.title}>Inventor Information</h2>
+      <p style={ps.desc}>This is who will be named on the provisional patent application.</p>
+      {greetingLine && <div style={hf.infoBar}>{greetingLine}</div>}
+      {data.fromBrainstorm && <div style={hf.infoBar}>💡 Your Brainstorm session has been pre-loaded — title, field, and brief are ready in the next steps.</div>}
+      <label style={ps.label}>Full Legal Name</label><input style={ps.input} value={name} onChange={e => setName(e.target.value)} placeholder="e.g., Jane M. Smith" />
+      <label style={ps.label}>City</label><input style={ps.input} value={city} onChange={e => setCity(e.target.value)} placeholder="e.g., Decatur" />
+      <label style={ps.label}>State / Province</label><input style={ps.input} value={stateVal} onChange={e => setStateVal(e.target.value)} placeholder="e.g., Georgia" />
+      <label style={ps.label}>Country</label><input style={ps.input} value={country} onChange={e => setCountry(e.target.value)} />
+      <label style={ps.label}>Email (optional)</label><input style={ps.input} value={email} onChange={e => setEmail(e.target.value)} placeholder="For filing correspondence" />
+      <StickyActionBar justSaved={justSaved}>
+        <button onClick={() => { setData({ ...data, inventorName: name, city, state: stateVal, country, email }); onNext(); }} disabled={!canProceed} style={{ ...ps.nextBtn, opacity: canProceed ? 1 : 0.4, cursor: canProceed ? "pointer" : "not-allowed", marginTop: 0 }}>Next: Our Vision →</button>
+      </StickyActionBar>
+    </div>
+  );
+}
+
+function AgreementSection({ data, setData, onNext, hasAgreedBefore, justSaved }) {
+  const [agreed, setAgreed] = useState(data.agreed || hasAgreedBefore || false);
+
+  // Returning user — show the compressed version
+  if (hasAgreedBefore && !data.fromBrainstorm) {
+    return (
+      <div style={ps.content}>
+        <h2 style={ps.title}>Our Shared Vision</h2>
+        <p style={ps.desc}>Continuing under HAIIC's shared vision — already on file from your previous applications.</p>
+        <details style={ag.collapsed}>
+          <summary style={ag.collapsedSummary}>View the vision again</summary>
+          <div style={ag.collapsedBody}>
+            <p style={ps.agreementText}>HAIIC was built on the belief that when AI helps create something valuable, the wealth it generates should flow back to the people AI affects most. Patent Forge is free because democratizing invention is the right thing to do.</p>
+            <p style={ps.agreementText}>The model we live by distributes value equally: one third to the inventor; one third to programs supporting workers displaced by AI; and one third to AI safety research.</p>
+            <p style={{ ...ps.agreementNote, marginTop: 12 }}>This is our compass, not a clause. Your invention is yours.</p>
+          </div>
+        </details>
+        <StickyActionBar justSaved={justSaved}>
+          <button onClick={() => { setData({ ...data, agreed: true }); onNext(); }} style={{ ...ps.nextBtn, marginTop: 0 }}>Continue: Title & Field →</button>
+        </StickyActionBar>
+      </div>
+    );
+  }
+
   return (
     <div style={ps.content}>
       <h2 style={ps.title}>Our Shared Vision</h2>
@@ -123,12 +174,14 @@ function AgreementSection({ data, setData, onNext }) {
         <p style={ps.agreementNote}>This is our compass, not a clause. Your invention is yours. But if it succeeds, we hope you'll consider paying it forward.</p>
       </div>
       <label style={ps.checkboxLabel}><input type="checkbox" checked={agreed} onChange={e => { setAgreed(e.target.checked); setData({ ...data, agreed: e.target.checked }); }} style={ps.checkbox} />I've read HAIIC's vision and I'm ready to move forward. This is not a legal obligation — it's an invitation to be part of something better.</label>
-      <button onClick={onNext} disabled={!agreed} style={{ ...ps.nextBtn, opacity: agreed ? 1 : 0.4, cursor: agreed ? "pointer" : "not-allowed" }}>I'm In — Next: Title & Field →</button>
+      <StickyActionBar justSaved={justSaved}>
+        <button onClick={onNext} disabled={!agreed} style={{ ...ps.nextBtn, opacity: agreed ? 1 : 0.4, cursor: agreed ? "pointer" : "not-allowed", marginTop: 0 }}>I'm In — Next: Title & Field →</button>
+      </StickyActionBar>
     </div>
   );
 }
 
-function TitleSection({ data, setData, onNext }) {
+function TitleSection({ data, setData, onNext, justSaved }) {
   const [title, setTitle] = useState(data.patentTitle || ""); const [field, setField] = useState(data.patentField || ""); const [summary, setSummary] = useState(data.summary || "");
   const canProceed = title.trim() && field.trim() && summary.trim();
   return (
@@ -140,12 +193,14 @@ function TitleSection({ data, setData, onNext }) {
       <p style={ps.hint}>Descriptive but concise.</p>
       <label style={ps.label}>Technical Field</label><input style={ps.input} value={field} onChange={e => setField(e.target.value)} placeholder="e.g., Manufacturing Equipment, Medical Devices..." />
       <label style={ps.label}>Brief Summary (2-3 sentences)</label><textarea style={ps.textarea} value={summary} onChange={e => setSummary(e.target.value)} placeholder="What does your invention do? What problem does it solve? What makes it different?" rows={4} />
-      <button onClick={() => { setData({ ...data, patentTitle: title, patentField: field, summary }); onNext(); }} disabled={!canProceed} style={{ ...ps.nextBtn, opacity: canProceed ? 1 : 0.4, cursor: canProceed ? "pointer" : "not-allowed" }}>Next: Detailed Description →</button>
+      <StickyActionBar justSaved={justSaved}>
+        <button onClick={() => { setData({ ...data, patentTitle: title, patentField: field, summary }); onNext(); }} disabled={!canProceed} style={{ ...ps.nextBtn, opacity: canProceed ? 1 : 0.4, cursor: canProceed ? "pointer" : "not-allowed", marginTop: 0 }}>Next: Detailed Description →</button>
+      </StickyActionBar>
     </div>
   );
 }
 
-function DescriptionSection({ data, setData, onNext }) {
+function DescriptionSection({ data, setData, onNext, justSaved }) {
   const bsCtx = data.brainstormBrief ? `\nInvention Brief from Brainstorm:\n${data.brainstormBrief.substring(0, 1000)}` : "";
   const chat = useChat(`You are a patent drafting assistant at HAIIC helping write the Detailed Description.\nInvention: ${data.patentTitle}\nField: ${data.patentField}\nSummary: ${data.summary}\nInventor: ${data.inventorName}${bsCtx}\nAsk about key components, materials, dimensions, alternative embodiments. Push for detail that lets someone reproduce it.`);
   const initialized = useRef(false);
@@ -157,12 +212,19 @@ function DescriptionSection({ data, setData, onNext }) {
       <h2 style={ps.title}>Detailed Description</h2>
       <p style={ps.desc}>This is the heart of your patent. The AI will help you describe your invention in enough detail that someone in your field could reproduce it.</p>
       <ChatThread messages={chat.messages.filter((m, i) => !(i === 0 && m.role === "user" && m.content.startsWith("[SYSTEM:")))} loading={chat.loading} onSend={msg => chat.send(msg)} placeholder="Describe how your invention works..." />
-      {chat.messages.length > 5 && (<><button onClick={proceed} style={ps.nextBtn}>Next: Draft Claims →</button><NoveltyAdvisor data={data} context={ctx} onSave={(u) => setData({ ...data, ...u })} /></>)}
+      {chat.messages.length > 5 && (
+        <>
+          <StickyActionBar justSaved={justSaved}>
+            <button onClick={proceed} style={{ ...ps.nextBtn, marginTop: 0 }}>Next: Draft Claims →</button>
+          </StickyActionBar>
+          <NoveltyAdvisor data={data} context={ctx} onSave={(u) => setData({ ...data, ...u })} />
+        </>
+      )}
     </div>
   );
 }
 
-function ClaimsSection({ data, setData, onNext }) {
+function ClaimsSection({ data, setData, onNext, justSaved }) {
   const chat = useChat(`You are a patent claims drafting assistant at HAIIC.\nInvention: ${data.patentTitle}\nField: ${data.patentField}\nDescription: ${(data.descriptionDiscussion || "").substring(0, 2000)}\nHelp draft claims. Start broad, then 2-3 dependent claims. Use patent language and plain English side by side.`);
   const initialized = useRef(false);
   useEffect(() => { if (!initialized.current && chat.messages.length === 0) { initialized.current = true; chat.send(`[SYSTEM: Explain what patent claims are, then draft a broad independent claim for "${data.patentTitle}". Present in patent language and plain English.]`); } }, []);
@@ -173,12 +235,19 @@ function ClaimsSection({ data, setData, onNext }) {
       <h2 style={ps.title}>Draft Patent Claims</h2>
       <p style={ps.desc}>Claims define exactly what your patent protects. The AI will help you draft them in proper legal language while explaining everything in plain English.</p>
       <ChatThread messages={chat.messages.filter((m, i) => !(i === 0 && m.role === "user" && m.content.startsWith("[SYSTEM:")))} loading={chat.loading} onSend={msg => chat.send(msg)} placeholder="Review the claims and let me know what to adjust..." />
-      {chat.messages.length > 4 && (<><button onClick={proceed} style={ps.nextBtn}>Generate Filing Package →</button><NoveltyAdvisor data={data} context={ctx} onSave={(u) => setData({ ...data, ...u })} /></>)}
+      {chat.messages.length > 4 && (
+        <>
+          <StickyActionBar justSaved={justSaved}>
+            <button onClick={proceed} style={{ ...ps.nextBtn, marginTop: 0 }}>Generate Filing Package →</button>
+          </StickyActionBar>
+          <NoveltyAdvisor data={data} context={ctx} onSave={(u) => setData({ ...data, ...u })} />
+        </>
+      )}
     </div>
   );
 }
 
-function ReviewSection({ data, setData }) {
+function ReviewSection({ data, setData, justSaved }) {
   const [document, setDocument] = useState(data.filingDocument || ""); const [loading, setLoading] = useState(!data.filingDocument); const [copied, setCopied] = useState(false);
   useEffect(() => { if (!data.filingDocument) generateDocument(); }, []);
   const generateDocument = async () => {
@@ -197,7 +266,9 @@ function ReviewSection({ data, setData }) {
       {loading ? (<div style={{ textAlign: "center", padding: 40, color: theme.textMuted }}><p>Generating your provisional patent application…</p><p style={{ fontSize: 13, marginTop: 8 }}>This may take a moment.</p></div>) : (
         <>
           <div style={ps.docCard}><pre style={ps.docText}>{document}</pre></div>
-          <div style={ps.docActions}><button onClick={() => { navigator.clipboard.writeText(document); setCopied(true); setTimeout(() => setCopied(false), 2000); }} style={ps.copyBtn}>{copied ? "✓ Copied!" : "Copy to Clipboard"}</button></div>
+          <StickyActionBar justSaved={justSaved}>
+            <button onClick={() => { navigator.clipboard.writeText(document); setCopied(true); setTimeout(() => setCopied(false), 2000); }} style={{ ...ps.copyBtn, marginTop: 0 }}>{copied ? "✓ Copied!" : "Copy to Clipboard"}</button>
+          </StickyActionBar>
           <div style={ps.nextSteps}><h3 style={ps.nextStepsTitle}>Next Steps</h3><p style={ps.nextStepsText}>1. Review the document carefully for accuracy.</p><p style={ps.nextStepsText}>2. File at the USPTO via EFS-Web (www.uspto.gov). Micro entity fee is approximately $80.</p><p style={ps.nextStepsText}>3. Your provisional patent gives you 12 months of "patent pending" status.</p><p style={ps.nextStepsText}>4. HAIIC will assist with commercialization under the benefit-sharing framework.</p></div>
         </>
       )}
@@ -207,28 +278,63 @@ function ReviewSection({ data, setData }) {
 
 export default function PatentForgePage() {
   const router = useRouter();
-  const [user, setUser] = useState(null); const [handle, setHandle] = useState(""); const [authLoading, setAuthLoading] = useState(true);
-  const [view, setView] = useState("dashboard"); const [project, setProject] = useState(null); const [section, setSection] = useState(0); const [data, setData] = useState({});
+  const [user, setUser] = useState(null);
+  const [handle, setHandle] = useState("");
+  const [profileName,    setProfileName]    = useState("");
+  const [profileCity,    setProfileCity]    = useState("");
+  const [profileState,   setProfileState]   = useState("");
+  const [profileCountry, setProfileCountry] = useState("");
+  const [profileEmail,   setProfileEmail]   = useState("");
+  const [isFirstTimeUser, setIsFirstTimeUser] = useState(false);
+  const [hasAgreedBefore, setHasAgreedBefore] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [view, setView] = useState("dashboard");
+  const [project, setProject] = useState(null);
+  const [section, setSection] = useState(0);
+  const [data, setData] = useState({});
+  const [justSaved, setJustSaved] = useState(false);
 
   useEffect(() => {
-    const loadHandle = async (userId) => {
-      const { data: profile } = await supabase.from("user_profiles").select("name").eq("user_id", userId).maybeSingle();
-      setHandle((profile?.name || "").trim() || "Inventor");
+    const loadProfileAndHistory = async (userId) => {
+      const { data: profile } = await supabase.from("user_profiles").select("name, profile_categories").eq("user_id", userId).maybeSingle();
+      const cleanName = (profile?.name || "").trim();
+      setHandle(cleanName || "Inventor");
+      setProfileName(cleanName);
+      // Future Phase 2: pull from profile.profile_categories or new profile columns when added
+      setProfileCity(profile?.profile_categories?.city || "");
+      setProfileState(profile?.profile_categories?.state || "");
+      setProfileCountry(profile?.profile_categories?.country || "");
+      setProfileEmail(profile?.profile_categories?.email || "");
+
+      // Check whether this user has any Patent Forge history at all
+      const { data: priorProjects } = await supabase.from(TABLE).select("id, data").eq("user_id", userId);
+      const noPriorProjects = !priorProjects || priorProjects.length === 0;
+      setIsFirstTimeUser(noPriorProjects);
+      // Check whether they've ever agreed to the vision in any project
+      const everAgreed = Array.isArray(priorProjects) && priorProjects.some(p => p?.data?.agreed === true);
+      setHasAgreedBefore(everAgreed);
     };
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) { router.push("/login?next=/patent-forge"); return; }
-      setUser(session.user); loadHandle(session.user.id); setAuthLoading(false);
+      setUser(session.user);
+      loadProfileAndHistory(session.user.id);
+      setAuthLoading(false);
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!session) router.push("/login?next=/patent-forge");
-      else { setUser(session.user); loadHandle(session.user.id); setAuthLoading(false); }
+      else { setUser(session.user); loadProfileAndHistory(session.user.id); setAuthLoading(false); }
     });
     return () => subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
     if (!project || authLoading) return;
-    const timer = setTimeout(async () => { await supabase.from(TABLE).update({ section, data, updated_at: new Date().toISOString() }).eq("id", project.id); }, 800);
+    const timer = setTimeout(async () => {
+      await supabase.from(TABLE).update({ section, data, updated_at: new Date().toISOString() }).eq("id", project.id);
+      setJustSaved(true);
+      setTimeout(() => setJustSaved(false), 1200);
+    }, 800);
     return () => clearTimeout(timer);
   }, [section, data]);
 
@@ -238,7 +344,12 @@ export default function PatentForgePage() {
   const handleNew = (proj) => { setProject(proj); setSection(proj.section || 0); setData(proj.data || {}); setView("session"); };
   const handleResume = (proj) => { setProject(proj); setSection(proj.section || 0); setData(proj.data || {}); setView("session"); };
   const handleDashboard = async () => { if (project) await supabase.from(TABLE).update({ section, data, updated_at: new Date().toISOString() }).eq("id", project.id); setView("dashboard"); setProject(null); setSection(0); setData({}); };
-  const handleSave = async () => { if (project) await supabase.from(TABLE).update({ section, data, updated_at: new Date().toISOString() }).eq("id", project.id); };
+  const handleSave = async () => {
+    if (!project) return;
+    await supabase.from(TABLE).update({ section, data, updated_at: new Date().toISOString() }).eq("id", project.id);
+    setJustSaved(true);
+    setTimeout(() => setJustSaved(false), 1200);
+  };
   const handleExport = () => { if (project) exportToDocx({ ...project, section, data }); };
   const handleSignOut = async () => { await supabase.auth.signOut(); router.push("/login"); };
 
@@ -248,7 +359,7 @@ export default function PatentForgePage() {
     return (
       <Layout title="Patent Forge" logoSrc="/patentforge-logo.png">
         <div style={styles.header}><p style={styles.label}>PATENT FORGE</p><h1 style={styles.heading}>Draft Your Provisional Patent</h1></div>
-        <ProjectDashboard onNew={handleNew} onResume={handleResume} onSignOut={handleSignOut} handle={handle} />
+        <ProjectDashboard onNew={handleNew} onResume={handleResume} onSignOut={handleSignOut} handle={handle} isFirstTimeUser={isFirstTimeUser} />
       </Layout>
     );
   }
@@ -260,7 +371,7 @@ export default function PatentForgePage() {
         <button onClick={handleDashboard} style={tb.dashBtn}>← Projects</button>
         <div style={tb.projectName}>{project?.name || "Untitled"}</div>
         <div style={tb.actions}>
-          <button onClick={handleSave} style={tb.btn}>💾 Save</button>
+          <button onClick={handleSave} style={tb.btn}>{justSaved ? "✓ Saved" : "💾 Save"}</button>
           <button onClick={handleExport} style={tb.btn}>⬇ Export .docx</button>
           <span style={tb.userHandle}>{handle}</span>
           <button onClick={handleSignOut} style={tb.signOutBtn}>Sign Out</button>
@@ -279,12 +390,12 @@ export default function PatentForgePage() {
           );
         })}
       </div>
-      {section === 0 && <InventorSection    data={data} setData={handleSetData} onNext={goNext} />}
-      {section === 1 && <AgreementSection   data={data} setData={handleSetData} onNext={goNext} />}
-      {section === 2 && <TitleSection       data={data} setData={handleSetData} onNext={goNext} />}
-      {section === 3 && <DescriptionSection data={data} setData={handleSetData} onNext={goNext} />}
-      {section === 4 && <ClaimsSection      data={data} setData={handleSetData} onNext={goNext} />}
-      {section === 5 && <ReviewSection      data={data} setData={handleSetData} />}
+      {section === 0 && <InventorSection    data={data} setData={handleSetData} onNext={goNext} profileName={profileName} profileCity={profileCity} profileState={profileState} profileCountry={profileCountry} profileEmail={profileEmail} justSaved={justSaved} />}
+      {section === 1 && <AgreementSection   data={data} setData={handleSetData} onNext={goNext} hasAgreedBefore={hasAgreedBefore} justSaved={justSaved} />}
+      {section === 2 && <TitleSection       data={data} setData={handleSetData} onNext={goNext} justSaved={justSaved} />}
+      {section === 3 && <DescriptionSection data={data} setData={handleSetData} onNext={goNext} justSaved={justSaved} />}
+      {section === 4 && <ClaimsSection      data={data} setData={handleSetData} onNext={goNext} justSaved={justSaved} />}
+      {section === 5 && <ReviewSection      data={data} setData={handleSetData} justSaved={justSaved} />}
     </Layout>
   );
 }
@@ -305,6 +416,7 @@ const ps = {
   input:    { width: "100%", background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.text, padding: "10px 14px", fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box" },
   textarea: { width: "100%", background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.text, padding: "10px 14px", fontSize: 14, fontFamily: "'DM Sans', sans-serif", resize: "vertical", outline: "none", boxSizing: "border-box" },
   nextBtn:  { background: theme.red, border: "none", borderRadius: 8, color: "#fff", padding: "12px 24px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", marginTop: 16, whiteSpace: "nowrap" },
+  copyBtn:  { padding: "12px 20px", background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.textMuted, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   agreementCard: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 28, marginBottom: 24 },
   agreementTitle: { fontFamily: "'Playfair Display', serif", fontSize: 18, fontWeight: 700, color: theme.text, marginBottom: 12 },
   agreementText: { fontSize: 14, lineHeight: 1.7, color: theme.textMuted, marginBottom: 16 },
@@ -319,10 +431,24 @@ const ps = {
   docCard: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 24, marginBottom: 20, maxHeight: 500, overflowY: "auto" },
   docText: { fontSize: 13, lineHeight: 1.7, color: "#ccc", fontFamily: "'DM Sans', monospace", whiteSpace: "pre-wrap", wordBreak: "break-word" },
   docActions: { display: "flex", gap: 12, marginBottom: 24 },
-  copyBtn: { padding: "12px 20px", background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.textMuted, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
-  nextSteps: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 24 },
+  nextSteps: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 24, marginTop: 16 },
   nextStepsTitle: { fontFamily: "'Playfair Display', serif", fontSize: 18, fontWeight: 700, color: theme.text, marginBottom: 12 },
   nextStepsText: { fontSize: 14, lineHeight: 1.7, color: theme.textMuted, marginBottom: 8 },
+  stickyBar: { position: "sticky", bottom: 0, background: "#1a1a1a", borderTop: `1px solid ${theme.border}`, marginTop: 24, padding: "14px 0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, zIndex: 5 },
+  stickyBarRight: { display: "flex", gap: 8, alignItems: "center", marginLeft: "auto" },
+  savedInline: { fontSize: 12, fontWeight: 700, color: "#80ff99", letterSpacing: 1 },
+};
+const wb = {
+  banner: { background: theme.surface, border: `1px solid ${theme.red}`, borderRadius: 10, padding: "16px 20px", marginBottom: 24, display: "flex", gap: 14, alignItems: "flex-start" },
+  icon: { fontSize: 24, lineHeight: 1, flexShrink: 0, marginTop: 2 },
+  body: { flex: 1 },
+  title: { fontSize: 16, fontWeight: 700, color: theme.text, marginBottom: 6 },
+  text: { fontSize: 13, color: theme.textMuted, lineHeight: 1.6, margin: 0 },
+};
+const ag = {
+  collapsed: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "12px 16px", marginBottom: 16 },
+  collapsedSummary: { fontSize: 13, color: theme.red, fontWeight: 600, cursor: "pointer", listStyle: "revert" },
+  collapsedBody: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${theme.border}` },
 };
 const db = {
   topRow:     { display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 4 },
