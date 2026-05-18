@@ -105,14 +105,14 @@ function StickyActionBar({ children, justSaved }) {
   );
 }
 
-function InventorSection({ data, setData, onNext, profileName, profileCity, profileState, profileCountry, profileEmail, justSaved }) {
-  const [name, setName]       = useState(data.inventorName || profileName || "");
+ffunction InventorSection({ data, setData, onNext, profileName, profileCity, profileState, profileCountry, profileEmail, justSaved }) {
+  const [name, setName]       = useState(data.inventorName || "");
   const [city, setCity]       = useState(data.city || profileCity || "");
   const [stateVal, setStateVal] = useState(data.state || profileState || "");
   const [country, setCountry] = useState(data.country || profileCountry || "United States");
   const [email, setEmail]     = useState(data.email || profileEmail || "");
   const canProceed = name.trim() && city.trim() && stateVal.trim();
-  const greetingLine = profileName && !data.inventorName ? `Drafting on behalf of ${profileName}? We've pre-filled what we know — adjust anything that needs adjusting.` : null;
+  const greetingLine = profileName && !data.inventorName ? `Drafting on behalf of ${profileName}? Fill in the details below — we've pre-filled what we can.` : null;
 
   return (
     <div style={ps.content}>
@@ -120,7 +120,9 @@ function InventorSection({ data, setData, onNext, profileName, profileCity, prof
       <p style={ps.desc}>This is who will be named on the provisional patent application.</p>
       {greetingLine && <div style={hf.infoBar}>{greetingLine}</div>}
       {data.fromBrainstorm && <div style={hf.infoBar}>💡 Your Brainstorm session has been pre-loaded — title, field, and brief are ready in the next steps.</div>}
-      <label style={ps.label}>Full Legal Name</label><input style={ps.input} value={name} onChange={e => setName(e.target.value)} placeholder="e.g., Jane M. Smith" />
+      <label style={ps.label}>Full Legal Name</label>
+      <input style={ps.input} value={name} onChange={e => setName(e.target.value)} placeholder="e.g., Jane M. Smith — or your handle" />
+      <p style={ps.helper}>Your handle works here too. The USPTO will need your legal name at filing, but you can keep it private in Patent Forge and add it to the filing documents you download later.</p>
       <label style={ps.label}>City</label><input style={ps.input} value={city} onChange={e => setCity(e.target.value)} placeholder="e.g., Decatur" />
       <label style={ps.label}>State / Province</label><input style={ps.input} value={stateVal} onChange={e => setStateVal(e.target.value)} placeholder="e.g., Georgia" />
       <label style={ps.label}>Country</label><input style={ps.input} value={country} onChange={e => setCountry(e.target.value)} />
@@ -413,6 +415,7 @@ const ps = {
   desc:     { fontSize: 15, lineHeight: 1.7, color: theme.textMuted, marginBottom: 16 },
   label:    { display: "block", fontSize: 13, fontWeight: 600, color: theme.textMuted, marginBottom: 6, marginTop: 16 },
   hint:     { fontSize: 12, color: theme.textDim, marginTop: 4 },
+  helper:   { fontSize: 12, color: theme.textDim, marginTop: 6, marginBottom: 4, lineHeight: 1.5, fontStyle: "italic" },
   input:    { width: "100%", background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.text, padding: "10px 14px", fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box" },
   textarea: { width: "100%", background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.text, padding: "10px 14px", fontSize: 14, fontFamily: "'DM Sans', sans-serif", resize: "vertical", outline: "none", boxSizing: "border-box" },
   nextBtn:  { background: theme.red, border: "none", borderRadius: 8, color: "#fff", padding: "12px 24px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", marginTop: 16, whiteSpace: "nowrap" },
