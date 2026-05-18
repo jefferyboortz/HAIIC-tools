@@ -29,10 +29,15 @@ function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
+function briefDisplayName(brief) {
+  if (!brief) return "Untitled brief";
+  return (brief.label && brief.label.trim()) || `Brief v${brief.versionNumber}`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// SYSTEM PROMPT (phase-aware, defensive)
+// SYSTEM PROMPT (phase-aware)
 // ─────────────────────────────────────────────────────────────────────────────
-function buildSystemPrompt({ handle, profileSummary, intent, currentPhase, captures }) {
+function buildSystemPrompt({ handle, profileSummary, intent, currentPhase, captures, briefs }) {
   const intentLine =
     intent === "idea"
       ? "They already have an idea and want help developing it."
@@ -80,13 +85,22 @@ Your job now: help the inventor PICK THE STRONGEST IDEA and get specific about i
 PROPOSE A CAPTURE (type: refine) when the strongest idea has been picked AND made concrete with technical specifics.
 After the user approves a refine capture, an "Generate Invention Brief" button appears for them to synthesize the full brief.`,
 
-    brief: `THE BRIEF HAS BEEN SYNTHESIZED. Your job now is to answer any follow-up questions the inventor has about the brief or what comes next. Do not propose more captures.`,
+    brief: `THE BRIEF HAS BEEN SYNTHESIZED at least once. The inventor may be returning to iterate. Your job now is to help them:
+- Reconsider or revise any capture they want to revisit.
+- Dig deeper into any angle they want to explore further.
+- Talk through whether to synthesize a new version of the brief after they've made changes.
+You can still emit insight captures if something durable comes up. Do not propose problem/explore/ideate/refine captures again — those phases have all been completed in this project. The inventor drives; you assist.`,
   };
 
   const captureSummary =
     captures.length === 0
       ? "No captures yet."
       : captures.map((c, i) => `${i + 1}. [${c.type.toUpperCase()}] ${c.title}: ${c.content.slice(0, 200)}`).join("\n");
+
+  const briefSummary =
+    !briefs || briefs.length === 0
+      ? "No brief synthesized yet."
+      : `${briefs.length} brief version${briefs.length === 1 ? "" : "s"} synthesized. Latest: ${briefDisplayName(briefs[briefs.length - 1])}.`;
 
   return `You are an innovation coach at HAIIC (Human-AI Innovation Commons) helping an inventor develop a patentable idea through a single continuous conversation.
 
@@ -97,6 +111,7 @@ CRITICAL STATE — READ THIS FIRST
 CURRENT PHASE: ${currentPhase.toUpperCase()}
 COMPLETED PHASES: ${completedLine}
 NEXT PHASE AFTER CURRENT: ${phaseAfter[currentPhase] || "—"}
+BRIEFS: ${briefSummary}
 
 ${phaseGuidance[currentPhase] || ""}
 
@@ -130,7 +145,7 @@ title: A short headline-style title (5-10 words)
 content: A 2-3 sentence summary in the inventor's voice, suitable for a sidebar card.
 [/CAPTURE_PROPOSED]
 
-The marker MUST use type: ${currentPhase === "intake" || currentPhase === "brief" ? "problem (this should not happen — see phase guidance)" : currentPhase}. Any other type is invalid and will be ignored.
+The marker MUST use type: ${currentPhase === "intake" || currentPhase === "brief" ? "insight (or omit — see phase guidance)" : currentPhase}. Any other type is invalid and will be ignored.
 
 The user sees your conversational response, then an inline "Capture this?" card with buttons. If they say Yes, the capture lands in the sidebar and you'll be moved to the next phase.
 
@@ -171,9 +186,8 @@ Continue the conversation now, working in the ${currentPhase.toUpperCase()} phas
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PHASE TRANSITION OPENER PROMPT
-// Generates the AI's first message in a new phase after a capture is approved.
 // ─────────────────────────────────────────────────────────────────────────────
-function buildTransitionPrompt({ handle, fromPhase, toPhase, capturedTitle, capturedContent, captures }) {
+function buildTransitionPrompt({ handle, fromPhase, toPhase, capturedTitle, capturedContent }) {
   const opener = {
     explore: `The problem has just been captured. Now you're moving into the EXPLORE phase — root causes, failed prior attempts, hidden assumptions, ripple effects. Write a short message (2 short paragraphs max) that:
 1. Briefly acknowledges what was just captured.
@@ -197,7 +211,7 @@ Do NOT propose a capture in this message. Do NOT include the [CAPTURE_PROPOSED] 
 
 Do NOT propose a capture in this message. Do NOT include the [CAPTURE_PROPOSED] marker.`,
 
-    brief: `The refined invention has just been captured. The inventor will see a "Generate Invention Brief" button next. Write a short message (1-2 short paragraphs) that:
+    brief: `The refined invention has just been captured. The inventor will see a "Synthesize Invention Brief" button next. Write a short message (1-2 short paragraphs) that:
 1. Acknowledges the refinement.
 2. Tells the inventor they can synthesize the full Invention Brief whenever they're ready, or keep refining if they want.
 
@@ -245,9 +259,9 @@ function parseCaptureMarker(text) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EXPORT — unified-chat .docx
+// EXPORT — unified-chat .docx (takes a specific brief version if provided)
 // ─────────────────────────────────────────────────────────────────────────────
-async function exportToDocx(project, handle) {
+async function exportToDocx(project, handle, selectedBrief) {
   const { name, data } = project;
   const {
     Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
@@ -331,12 +345,12 @@ async function exportToDocx(project, handle) {
     }
   }
 
-  if (data.inventionBrief) {
+  if (selectedBrief?.content) {
     children.push(
       new Paragraph({ children: [new TextRun("")], pageBreakBefore: true }),
-      h2("Invention Brief"),
+      h2(`Invention Brief — ${briefDisplayName(selectedBrief)}`),
       spacer(60),
-      ...data.inventionBrief.split("\n").map((line) =>
+      ...selectedBrief.content.split("\n").map((line) =>
         new Paragraph({
           spacing: { after: line.trim() === "" ? 120 : 40 },
           children: [new TextRun({ text: line, font: "Arial", size: 20, color: GRAY })],
@@ -526,7 +540,7 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle, onOpenLegacy }) 
         intakeUpdates: "",
         messages: [],
         captures: [],
-        inventionBrief: null,
+        briefs: [],
       },
     };
     await supabase.from(TABLE).insert(project);
@@ -610,6 +624,146 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle, onOpenLegacy }) 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// BRIEF VIEW — version dropdown, editable label, staleness notice, synth button
+// ─────────────────────────────────────────────────────────────────────────────
+function BriefView({
+  briefs,
+  selectedBriefId,
+  setSelectedBriefId,
+  capturesStale,
+  onSynthesizeNew,
+  onRenameBrief,
+  onDeleteBrief,
+  onTakeToForge,
+  synthesizing,
+}) {
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [labelDraft, setLabelDraft] = useState("");
+
+  const selected = briefs.find((b) => b.id === selectedBriefId) || briefs[briefs.length - 1];
+  const isLatest = selected?.id === briefs[briefs.length - 1]?.id;
+
+  if (!selected) {
+    return (
+      <div style={bv.wrap}>
+        <p style={bv.empty}>No brief synthesized yet.</p>
+      </div>
+    );
+  }
+
+  const startRenameLabel = () => {
+    setLabelDraft(selected.label || "");
+    setEditingLabel(true);
+  };
+
+  const commitLabel = () => {
+    onRenameBrief(selected.id, labelDraft.trim());
+    setEditingLabel(false);
+  };
+
+  const cancelLabel = () => {
+    setEditingLabel(false);
+    setLabelDraft("");
+  };
+
+  return (
+    <div style={bv.wrap}>
+      <div style={bv.header}>
+        <div style={bv.headerLeft}>
+          {editingLabel ? (
+            <div style={bv.labelEditRow}>
+              <input
+                style={bv.labelInput}
+                value={labelDraft}
+                onChange={(e) => setLabelDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitLabel();
+                  if (e.key === "Escape") cancelLabel();
+                }}
+                placeholder={`Brief v${selected.versionNumber}`}
+                autoFocus
+              />
+              <button onClick={commitLabel} style={bv.labelBtn}>Save</button>
+              <button onClick={cancelLabel} style={bv.labelBtnGhost}>Cancel</button>
+            </div>
+          ) : (
+            <div style={bv.titleRow}>
+              <h2 style={bv.title}>{briefDisplayName(selected)}</h2>
+              <button onClick={startRenameLabel} style={bv.renameBtn} title="Rename version">✏</button>
+            </div>
+          )}
+          <p style={bv.meta}>
+            Version {selected.versionNumber} ·{" "}
+            {new Date(selected.createdAt).toLocaleString()}
+            {isLatest && <span style={bv.latestTag}>LATEST</span>}
+          </p>
+        </div>
+
+        {briefs.length > 1 && (
+          <select
+            style={bv.versionSelect}
+            value={selected.id}
+            onChange={(e) => setSelectedBriefId(e.target.value)}
+          >
+            {briefs.slice().reverse().map((b) => (
+              <option key={b.id} value={b.id}>
+                {briefDisplayName(b)}{b.id === briefs[briefs.length - 1].id ? " (latest)" : ""}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {isLatest && capturesStale && (
+        <div style={bv.staleNotice}>
+          Captures have changed since this brief was synthesized.
+          Want to synthesize a new version?
+          <button
+            onClick={onSynthesizeNew}
+            disabled={synthesizing}
+            style={{ ...bv.staleBtn, opacity: synthesizing ? 0.6 : 1 }}
+          >
+            {synthesizing ? "Synthesizing…" : "Synthesize new version →"}
+          </button>
+        </div>
+      )}
+
+      <div style={bv.card}>
+        <pre style={bv.text}>{selected.content}</pre>
+      </div>
+
+      <div style={bv.actions}>
+        <button onClick={() => navigator.clipboard.writeText(selected.content)} style={bv.copyBtn}>
+          Copy to Clipboard
+        </button>
+        <button onClick={onTakeToForge} style={bv.forgeBtn}>Take to Patent Forge →</button>
+        {briefs.length > 1 && (
+          <button
+            onClick={() => onDeleteBrief(selected.id)}
+            style={bv.deleteBtn}
+            title="Delete this brief version"
+          >
+            Delete version
+          </button>
+        )}
+      </div>
+
+      {!isLatest && (
+        <p style={bv.viewingOlderNote}>
+          You're viewing an older brief version. The latest is{" "}
+          <button
+            onClick={() => setSelectedBriefId(briefs[briefs.length - 1].id)}
+            style={bv.linkBtn}
+          >
+            {briefDisplayName(briefs[briefs.length - 1])}
+          </button>.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MAIN BRAINSTORM PAGE
 // ─────────────────────────────────────────────────────────────────────────────
 export default function BrainstormPage() {
@@ -628,12 +782,21 @@ export default function BrainstormPage() {
   const [messages,       setMessages]       = useState([]);
   const [captures,       setCaptures]       = useState([]);
   const [currentPhase,   setCurrentPhase]   = useState("intake");
-  const [inventionBrief, setBrief]          = useState(null);
+  const [briefs,         setBriefs]         = useState([]);
+  const [selectedBriefId, setSelectedBriefId] = useState(null);
   const [pendingCapture, setPendingCapture] = useState(null);
 
+  // Tracks last captures-state at the moment the latest brief was synthesized
+  const [capturesSnapshotIds, setCapturesSnapshotIds] = useState(null);
+
+  // Left column tab: "chat" | "brief"
+  const [activeTab, setActiveTab] = useState("chat");
+
   const [chatLoading, setChatLoading] = useState(false);
+  const [synthesizing, setSynthesizing] = useState(false);
   const [saving,      setSaving]      = useState(false);
   const [justSaved,   setJustSaved]   = useState(false);
+  const [continuationFired, setContinuationFired] = useState(false);
 
   const saveTimerRef = useRef(null);
 
@@ -673,7 +836,7 @@ export default function BrainstormPage() {
     }, 800);
 
     return () => clearTimeout(saveTimerRef.current);
-  }, [messages, captures, currentPhase, intent, intakeUpdates, inventionBrief]);
+  }, [messages, captures, currentPhase, intent, intakeUpdates, briefs, selectedBriefId]);
 
   useEffect(() => {
     const handler = () => {
@@ -683,7 +846,7 @@ export default function BrainstormPage() {
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-  }, [project, view, messages, captures, currentPhase, intent, intakeUpdates, inventionBrief]);
+  }, [project, view, messages, captures, currentPhase, intent, intakeUpdates, briefs, selectedBriefId]);
 
   const saveNow = async () => {
     if (!project) return;
@@ -695,7 +858,8 @@ export default function BrainstormPage() {
       intakeUpdates,
       messages,
       captures,
-      inventionBrief,
+      briefs,
+      selectedBriefId,
     };
     await supabase
       .from(TABLE)
@@ -722,9 +886,9 @@ export default function BrainstormPage() {
         intent,
         currentPhase,
         captures,
+        briefs,
       });
 
-      // Strip divider messages from history before sending to API
       const apiMessages = nextMessages
         .filter((m) => m.role === "user" || m.role === "assistant")
         .map((m) => ({ role: m.role, content: m.content }));
@@ -772,11 +936,10 @@ export default function BrainstormPage() {
     } finally {
       setChatLoading(false);
     }
-  }, [messages, chatLoading, handle, profileSummary, intent, currentPhase, captures, intakeUpdates]);
+  }, [messages, chatLoading, handle, profileSummary, intent, currentPhase, captures, briefs, intakeUpdates]);
 
-  // Fires after capture approval to generate the AI's opening message for the new phase.
-  const generatePhaseOpener = async (fromPhase, toPhase, capturedTitle, capturedContent, currentMessages, currentCaptures) => {
-    if (!toPhase || toPhase === fromPhase || toPhase === "brief") return null;
+  const generatePhaseOpener = async (fromPhase, toPhase, capturedTitle, capturedContent, currentMessages) => {
+    if (!toPhase || toPhase === fromPhase) return null;
 
     try {
       const transitionSystem = buildTransitionPrompt({
@@ -785,10 +948,8 @@ export default function BrainstormPage() {
         toPhase,
         capturedTitle,
         capturedContent,
-        captures: currentCaptures,
       });
 
-      // Pass the last few real messages for context (skip dividers)
       const recent = currentMessages
         .filter((m) => m.role === "user" || m.role === "assistant")
         .slice(-6)
@@ -806,7 +967,6 @@ export default function BrainstormPage() {
 
       const result = await res.json();
       const text = result.content?.map((i) => (i.type === "text" ? i.text : "")).join("\n") || "";
-      // Strip any stray markers just in case
       return text.replace(/\[CAPTURE_PROPOSED\][\s\S]*?\[\/CAPTURE_PROPOSED\]/g, "").trim();
     } catch {
       return null;
@@ -835,18 +995,16 @@ export default function BrainstormPage() {
     if (phaseChanged) setCurrentPhase(nextPhase);
     setPendingCapture(null);
 
-    // If the phase changed, append a divider + a transition opener message
     if (phaseChanged) {
       const dividerMsg = {
         role: "divider",
         content: `${capLabel(cap.type)} captured. Now ${PHASE_DIVIDER_LABELS[nextPhase] || nextPhase}.`,
         timestamp: new Date().toISOString(),
       };
-      // Insert divider immediately so the user gets a visual signal before the API call returns
       setMessages((prev) => [...prev, dividerMsg]);
 
       setChatLoading(true);
-      const opener = await generatePhaseOpener(fromPhase, nextPhase, cap.title, cap.content, messages, nextCaptures);
+      const opener = await generatePhaseOpener(fromPhase, nextPhase, cap.title, cap.content, messages);
       if (opener) {
         setMessages((prev) => [...prev, {
           role: "assistant",
@@ -860,8 +1018,8 @@ export default function BrainstormPage() {
 
   const dismissCapture = () => setPendingCapture(null);
 
-  const generateBrief = async () => {
-    setChatLoading(true);
+  const synthesizeNewBriefVersion = async () => {
+    setSynthesizing(true);
     try {
       const captureText = captures.map((c) => `${c.type.toUpperCase()} — ${c.title}\n${c.content}`).join("\n\n");
       const convoText = messages
@@ -904,28 +1062,64 @@ This Invention Brief is ready to be taken into Patent Forge.`,
 
       const result = await res.json();
       const text = result.content?.map((i) => (i.type === "text" ? i.text : "")).join("\n") || "Unable to synthesize brief.";
-      setBrief(text);
+
+      const nextVersionNumber = briefs.length > 0
+        ? Math.max(...briefs.map((b) => b.versionNumber)) + 1
+        : 1;
+
+      const newBrief = {
+        id: genId(),
+        versionNumber: nextVersionNumber,
+        label: "",
+        content: text,
+        capturesSnapshotIds: captures.map((c) => c.id),
+        createdAt: new Date().toISOString(),
+      };
+
+      const nextBriefs = [...briefs, newBrief];
+      setBriefs(nextBriefs);
+      setSelectedBriefId(newBrief.id);
+      setCapturesSnapshotIds(newBrief.capturesSnapshotIds);
       setCurrentPhase("brief");
+      setActiveTab("brief");
     } catch {
-      setBrief("Unable to generate brief. Please try again.");
+      // Silently fail; user can retry
     } finally {
-      setChatLoading(false);
+      setSynthesizing(false);
+    }
+  };
+
+  const renameBrief = (briefId, newLabel) => {
+    setBriefs((prev) => prev.map((b) => (b.id === briefId ? { ...b, label: newLabel } : b)));
+  };
+
+  const deleteBrief = (briefId) => {
+    if (briefs.length <= 1) {
+      alert("Can't delete the only brief version. Synthesize a new version first if you want to replace it.");
+      return;
+    }
+    if (!confirm("Delete this brief version? This cannot be undone.")) return;
+    const nextBriefs = briefs.filter((b) => b.id !== briefId);
+    setBriefs(nextBriefs);
+    if (selectedBriefId === briefId) {
+      setSelectedBriefId(nextBriefs[nextBriefs.length - 1].id);
     }
   };
 
   const handleTakeToForge = () => {
-    if (!inventionBrief) return;
+    const brief = briefs.find((b) => b.id === selectedBriefId) || briefs[briefs.length - 1];
+    if (!brief) return;
     try {
-      const titleMatch = inventionBrief.match(/Title:\s*(.+)/);
+      const titleMatch = brief.content.match(/Title:\s*(.+)/);
       const title = titleMatch ? titleMatch[1].trim() : project?.name || "";
-      const fieldMatch = inventionBrief.match(/Field:\s*(.+)/);
+      const fieldMatch = brief.content.match(/Field:\s*(.+)/);
       const field = fieldMatch ? fieldMatch[1].trim() : "";
       localStorage.setItem(HANDOFF_KEY, JSON.stringify({
         name: project?.name || title || "Brainstorm Import",
         patentTitle: title,
         patentField: field,
         field,
-        inventionBrief,
+        inventionBrief: brief.content,
         timestamp: new Date().toISOString(),
       }));
     } catch {}
@@ -939,23 +1133,73 @@ This Invention Brief is ready to be taken into Patent Forge.`,
     setIntakeUpdates("");
     setMessages([]);
     setCaptures([]);
-    setBrief(null);
+    setBriefs([]);
+    setSelectedBriefId(null);
+    setCapturesSnapshotIds(null);
+    setActiveTab("chat");
+    setContinuationFired(false);
     setPendingCapture(null);
     setView("session");
   };
 
+  // Migrate old data shape on load: data.inventionBrief (string) → data.briefs (array)
+  const migrateBriefs = (d) => {
+    if (Array.isArray(d.briefs)) return d.briefs;
+    if (typeof d.inventionBrief === "string" && d.inventionBrief.trim()) {
+      return [{
+        id: genId(),
+        versionNumber: 1,
+        label: "",
+        content: d.inventionBrief,
+        capturesSnapshotIds: (d.captures || []).map((c) => c.id),
+        createdAt: d.updated_at || new Date().toISOString(),
+      }];
+    }
+    return [];
+  };
+
   const handleResume = (proj) => {
     const d = proj.data || {};
+    const migratedBriefs = migrateBriefs(d);
     setProject(proj);
     setCurrentPhase(d.currentPhase || "intake");
     setIntent(d.intent || null);
     setIntakeUpdates(d.intakeUpdates || "");
     setMessages(Array.isArray(d.messages) ? d.messages : []);
     setCaptures(Array.isArray(d.captures) ? d.captures : []);
-    setBrief(d.inventionBrief || null);
+    setBriefs(migratedBriefs);
+    setSelectedBriefId(d.selectedBriefId || (migratedBriefs.length > 0 ? migratedBriefs[migratedBriefs.length - 1].id : null));
+    setCapturesSnapshotIds(migratedBriefs.length > 0 ? migratedBriefs[migratedBriefs.length - 1].capturesSnapshotIds : null);
+    setActiveTab("chat"); // Continuation default: drop them back into the chat
+    setContinuationFired(false);
     setPendingCapture(null);
     setView("session");
   };
+
+  // Continuation re-entry: if there's at least one brief, append a fresh AI greeting
+  // when the user re-opens the project. Fires once per resume.
+  useEffect(() => {
+    if (view !== "session") return;
+    if (continuationFired) return;
+    if (briefs.length === 0) return;
+    if (messages.length === 0) return;
+
+    // Only fire if the most recent message is NOT already an AI continuation greeting
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg?.role === "assistant" && lastMsg?.isContinuation) return;
+
+    setContinuationFired(true);
+    const latest = briefs[briefs.length - 1];
+    const greeting = `Welcome back, ${handle}. Your latest Invention Brief is ${briefDisplayName(latest)}, synthesized ${new Date(latest.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.
+
+What would you like to revisit? We can revise any of the captures, dig deeper on a particular angle, or synthesize a new brief version once you've made changes.`;
+    setMessages((prev) => [...prev, {
+      role: "assistant",
+      content: greeting,
+      isContinuation: true,
+      timestamp: new Date().toISOString(),
+    }]);
+  }, [view, briefs, messages, continuationFired, handle]);
 
   const handleOpenLegacy = (proj) => {
     setProject(proj);
@@ -971,7 +1215,11 @@ This Invention Brief is ready to be taken into Patent Forge.`,
     setMessages([]);
     setCaptures([]);
     setIntent(null);
-    setBrief(null);
+    setBriefs([]);
+    setSelectedBriefId(null);
+    setCapturesSnapshotIds(null);
+    setActiveTab("chat");
+    setContinuationFired(false);
     setPendingCapture(null);
   };
 
@@ -1003,6 +1251,19 @@ This Invention Brief is ready to be taken into Patent Forge.`,
       content: `Hi ${handle}. ${opener}`,
       timestamp: new Date().toISOString(),
     }]);
+  };
+
+  // Compute staleness: are current captures different from those when the latest brief was generated?
+  const computeStaleness = () => {
+    if (briefs.length === 0) return false;
+    const latest = briefs[briefs.length - 1];
+    const snapIds = latest.capturesSnapshotIds || [];
+    const currentIds = captures.map((c) => c.id);
+    if (snapIds.length !== currentIds.length) return true;
+    for (let i = 0; i < snapIds.length; i++) {
+      if (snapIds[i] !== currentIds[i]) return true;
+    }
+    return false;
   };
 
   if (authLoading) {
@@ -1044,17 +1305,17 @@ This Invention Brief is ready to be taken into Patent Forge.`,
   }
 
   const showIntake = currentPhase === "intake";
-  const canSynthesize = captures.some((c) => c.type === "refine") && !inventionBrief && currentPhase !== "brief";
+  const hasBrief = briefs.length > 0;
+  const capturesStale = computeStaleness();
+  const canSynthesizeFirst = captures.some((c) => c.type === "refine") && !hasBrief;
 
   // Build the messages array we'll feed to ChatThread.
-  // Divider messages get rendered as inline action nodes attached to the preceding message.
   const displayMessages = [];
   const inlineActions = [];
 
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
     if (m.role === "divider") {
-      // Attach divider to the previous message in displayMessages
       const attachIdx = displayMessages.length - 1;
       if (attachIdx >= 0) {
         inlineActions.push({
@@ -1073,10 +1334,7 @@ This Invention Brief is ready to be taken into Patent Forge.`,
     }
   }
 
-  // Pending-capture card attaches to the assistant message that proposed it.
-  // We need to map the index in `messages` to the index in `displayMessages`.
   if (pendingCapture) {
-    // Count how many non-divider messages exist up to and including pendingCapture.afterMsgIdx
     let displayIdx = -1;
     for (let i = 0; i <= pendingCapture.afterMsgIdx && i < messages.length; i++) {
       if (messages[i].role !== "divider") displayIdx++;
@@ -1122,31 +1380,75 @@ This Invention Brief is ready to be taken into Patent Forge.`,
               profileSummary={profileSummary}
               onStart={handleStartConversation}
             />
-          ) : inventionBrief ? (
-            <div style={br.wrap}>
-              <h2 style={br.title}>Your Invention Brief</h2>
-              <div style={br.card}><pre style={br.text}>{inventionBrief}</pre></div>
-              <div style={br.actions}>
-                <button onClick={() => { navigator.clipboard.writeText(inventionBrief); }} style={br.copyBtn}>
-                  Copy to Clipboard
-                </button>
-                <button onClick={handleTakeToForge} style={br.forgeBtn}>Take to Patent Forge →</button>
-              </div>
-            </div>
           ) : (
             <>
-              <ChatThread
-                messages={displayMessages}
-                loading={chatLoading}
-                onSend={sendMessage}
-                placeholder="Type a message…"
-                inlineActions={inlineActions}
-              />
-              {canSynthesize && (
-                <div style={pg.synthBar}>
-                  <p style={pg.synthText}>Ready to synthesize what we have into an Invention Brief?</p>
-                  <button onClick={generateBrief} style={pg.synthBtn}>Generate Invention Brief →</button>
+              {hasBrief && (
+                <div style={tabs.bar}>
+                  <button
+                    onClick={() => setActiveTab("chat")}
+                    style={{ ...tabs.tab, ...(activeTab === "chat" ? tabs.tabActive : {}) }}
+                  >
+                    Chat
+                  </button>
+                  <button
+                    onClick={() => setActiveTab("brief")}
+                    style={{ ...tabs.tab, ...(activeTab === "brief" ? tabs.tabActive : {}) }}
+                  >
+                    Brief {briefs.length > 1 && <span style={tabs.count}>({briefs.length})</span>}
+                  </button>
                 </div>
+              )}
+
+              {activeTab === "chat" || !hasBrief ? (
+                <>
+                  <ChatThread
+                    messages={displayMessages}
+                    loading={chatLoading}
+                    onSend={sendMessage}
+                    placeholder="Type a message…"
+                    inlineActions={inlineActions}
+                  />
+                  {canSynthesizeFirst && (
+                    <div style={pg.synthBar}>
+                      <p style={pg.synthText}>Ready to synthesize what we have into an Invention Brief?</p>
+                      <button
+                        onClick={synthesizeNewBriefVersion}
+                        disabled={synthesizing}
+                        style={{ ...pg.synthBtn, opacity: synthesizing ? 0.6 : 1 }}
+                      >
+                        {synthesizing ? "Synthesizing…" : "Generate Invention Brief →"}
+                      </button>
+                    </div>
+                  )}
+                  {hasBrief && (
+                    <div style={pg.synthBar}>
+                      <p style={pg.synthText}>
+                        {capturesStale
+                          ? "Captures have changed. Ready for a new brief version?"
+                          : "Want to synthesize a new brief version?"}
+                      </p>
+                      <button
+                        onClick={synthesizeNewBriefVersion}
+                        disabled={synthesizing}
+                        style={{ ...pg.synthBtn, opacity: synthesizing ? 0.6 : 1 }}
+                      >
+                        {synthesizing ? "Synthesizing…" : "Synthesize new version →"}
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <BriefView
+                  briefs={briefs}
+                  selectedBriefId={selectedBriefId || briefs[briefs.length - 1].id}
+                  setSelectedBriefId={setSelectedBriefId}
+                  capturesStale={capturesStale}
+                  onSynthesizeNew={synthesizeNewBriefVersion}
+                  onRenameBrief={renameBrief}
+                  onDeleteBrief={deleteBrief}
+                  onTakeToForge={handleTakeToForge}
+                  synthesizing={synthesizing}
+                />
               )}
             </>
           )}
@@ -1156,7 +1458,14 @@ This Invention Brief is ready to be taken into Patent Forge.`,
           currentPhase={currentPhase}
           captures={captures}
           onSave={saveNow}
-          onExport={() => exportToDocx({ ...project, data: { schema: "unified-v1", currentPhase, intent, intakeUpdates, messages, captures, inventionBrief } }, handle)}
+          onExport={() => {
+            const brief = briefs.find((b) => b.id === selectedBriefId) || briefs[briefs.length - 1];
+            exportToDocx(
+              { ...project, data: { schema: "unified-v1", currentPhase, intent, intakeUpdates, messages, captures, briefs } },
+              handle,
+              brief,
+            );
+          }}
           saving={saving}
           justSaved={justSaved}
         />
@@ -1228,6 +1537,13 @@ const pg = {
   synthBtn: { background: theme.red, border: "none", borderRadius: 7, color: "#fff", padding: "9px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
 };
 
+const tabs = {
+  bar: { display: "flex", gap: 4, padding: "12px 0 0", borderBottom: `1px solid ${theme.border}`, marginBottom: 8 },
+  tab: { background: "transparent", border: "none", color: theme.textMuted, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", borderBottom: "2px solid transparent" },
+  tabActive: { color: theme.red, borderBottom: `2px solid ${theme.red}` },
+  count: { color: theme.textDim, fontWeight: 500, marginLeft: 4 },
+};
+
 const cc = {
   card: { background: theme.surface, border: `1px solid ${theme.red}`, borderRadius: 8, padding: "12px 14px", maxWidth: 520 },
   cardHead: { fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: theme.red, textTransform: "uppercase", marginBottom: 6 },
@@ -1242,6 +1558,33 @@ const dv = {
   wrap: { display: "flex", alignItems: "center", gap: 12, margin: "14px 0", marginLeft: -38, paddingRight: 0 },
   line: { flex: 1, height: 1, background: theme.red, opacity: 0.3 },
   text: { fontSize: 11, fontWeight: 700, color: theme.red, textTransform: "uppercase", letterSpacing: 2, whiteSpace: "nowrap" },
+};
+
+const bv = {
+  wrap: { padding: "12px 0 24px" },
+  empty: { color: theme.textMuted, fontSize: 14, fontStyle: "italic" },
+  header: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 16, flexWrap: "wrap" },
+  headerLeft: { flex: 1, minWidth: 240 },
+  titleRow: { display: "flex", alignItems: "center", gap: 8 },
+  title: { fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 700, color: theme.text, margin: 0 },
+  renameBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "4px 8px", fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  labelEditRow: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" },
+  labelInput: { background: theme.surface, border: `1px solid ${theme.red}`, borderRadius: 6, color: theme.text, padding: "6px 10px", fontSize: 16, fontFamily: "'DM Sans', sans-serif", outline: "none", minWidth: 220 },
+  labelBtn: { background: theme.red, border: "none", borderRadius: 6, color: "#fff", padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  labelBtnGhost: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  meta: { fontSize: 12, color: theme.textDim, margin: 0, marginTop: 4 },
+  latestTag: { background: theme.red, color: "#fff", borderRadius: 4, padding: "2px 6px", fontSize: 9, fontWeight: 700, marginLeft: 8, letterSpacing: 1 },
+  versionSelect: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 7, color: theme.text, padding: "7px 10px", fontSize: 12, fontFamily: "'DM Sans', sans-serif", outline: "none" },
+  staleNotice: { background: "#2a2419", border: "1px solid #4a4019", borderRadius: 8, color: "#d4b87a", padding: "12px 16px", fontSize: 13, lineHeight: 1.6, marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" },
+  staleBtn: { background: theme.red, border: "none", borderRadius: 7, color: "#fff", padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  card: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 24, marginBottom: 16 },
+  text: { fontSize: 13, lineHeight: 1.7, color: "#ccc", fontFamily: "'DM Sans', monospace", whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 },
+  actions: { display: "flex", gap: 12, flexWrap: "wrap" },
+  copyBtn: { padding: "10px 18px", background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.textMuted, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  forgeBtn: { padding: "10px 18px", background: theme.red, border: "none", borderRadius: 8, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  deleteBtn: { padding: "10px 14px", background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.textDim, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  viewingOlderNote: { fontSize: 12, color: theme.textDim, marginTop: 16, fontStyle: "italic" },
+  linkBtn: { background: "transparent", border: "none", color: theme.red, fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0, fontFamily: "'DM Sans', sans-serif", textDecoration: "underline" },
 };
 
 const ip = {
@@ -1293,14 +1636,4 @@ const lv = {
   body: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, padding: "16px 20px", color: theme.textMuted, fontSize: 13, lineHeight: 1.7 },
   sectionTitle: { color: theme.red, fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5, marginTop: 8, marginBottom: 6 },
   transcript: { whiteSpace: "pre-wrap", fontSize: 13, color: theme.textMuted, fontFamily: "'DM Sans', sans-serif", margin: 0 },
-};
-
-const br = {
-  wrap: { padding: "20px 0" },
-  title: { fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 700, color: theme.text, marginBottom: 12 },
-  card: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 24, marginBottom: 16 },
-  text: { fontSize: 13, lineHeight: 1.7, color: "#ccc", fontFamily: "'DM Sans', monospace", whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 },
-  actions: { display: "flex", gap: 12, flexWrap: "wrap" },
-  copyBtn: { padding: "12px 20px", background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.textMuted, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
-  forgeBtn: { padding: "12px 20px", background: theme.red, border: "none", borderRadius: 8, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
 };
