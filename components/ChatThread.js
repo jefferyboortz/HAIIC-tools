@@ -8,6 +8,7 @@ export default function ChatThread({
   placeholder,
   emptyState,
   inlineActions,
+  disabled,
 }) {
   const [input, setInput] = useState("");
   const scrollRef = useRef(null);
@@ -17,13 +18,12 @@ export default function ChatThread({
   }, [messages, loading, inlineActions]);
 
   const handleSend = () => {
+    if (disabled) return;
     if (!input.trim() || loading) return;
     onSend(input.trim());
     setInput("");
   };
 
-  // inlineActions is optional: an array of { afterMessageIdx, node }
-  // The node is rendered directly below the message at that index.
   const actionsByIdx = {};
   if (Array.isArray(inlineActions)) {
     for (const action of inlineActions) {
@@ -32,6 +32,8 @@ export default function ChatThread({
       }
     }
   }
+
+  const sendDisabled = disabled || !input.trim() || loading;
 
   return (
     <div style={styles.container}>
@@ -65,7 +67,7 @@ export default function ChatThread({
       </div>
       <div style={styles.inputArea}>
         <textarea
-          style={styles.input}
+          style={{ ...styles.input, opacity: disabled ? 0.5 : 1, cursor: disabled ? "not-allowed" : "text" }}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
@@ -76,14 +78,17 @@ export default function ChatThread({
           }}
           placeholder={placeholder || "Type your response..."}
           rows={2}
+          disabled={disabled}
         />
         <button
           onClick={handleSend}
-          disabled={!input.trim() || loading}
+          disabled={sendDisabled}
           style={{
             ...styles.sendBtn,
-            opacity: !input.trim() || loading ? 0.4 : 1,
+            opacity: sendDisabled ? 0.4 : 1,
+            cursor: sendDisabled ? "not-allowed" : "pointer",
           }}
+          title={disabled ? "Finish editing the capture first" : ""}
         >
           Send
         </button>
@@ -161,7 +166,6 @@ const styles = {
     padding: "10px 20px",
     fontSize: 14,
     fontWeight: 700,
-    cursor: "pointer",
     fontFamily: "'DM Sans', sans-serif",
   },
 };
