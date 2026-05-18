@@ -184,7 +184,6 @@ Continue the conversation now, working in the ${currentPhase.toUpperCase()} phas
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CAPTURE REVISION PROMPT
-// Used when the user provides AI instructions during capture editing.
 // ─────────────────────────────────────────────────────────────────────────────
 function buildRevisionPrompt({ captureType, originalTitle, originalContent, userEditedTitle, userEditedContent, instructions }) {
   return `You are helping an inventor revise a previously-captured artifact in their Brainstorm session. The artifact is a ${captureType.toUpperCase()} capture.
@@ -718,7 +717,6 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle, onOpenLegacy }) 
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CAPTURE EDIT PANEL
-// Anchored below ChatThread when a capture is being edited.
 // ─────────────────────────────────────────────────────────────────────────────
 function CaptureEditPanel({ capture, onCancel, onSave }) {
   const [title, setTitle] = useState(capture.title);
@@ -726,14 +724,12 @@ function CaptureEditPanel({ capture, onCancel, onSave }) {
   const [instructions, setInstructions] = useState("");
   const [working, setWorking] = useState(false);
 
-  // Detect whether user manually changed anything in title or content
   const manuallyChanged =
     title.trim() !== capture.title.trim() ||
     content.trim() !== capture.content.trim();
 
   const hasInstructions = instructions.trim().length > 0;
 
-  // Submit button label varies based on what's filled in
   const submitLabel = !manuallyChanged && !hasInstructions
     ? "Make a change first"
     : hasInstructions
@@ -962,7 +958,7 @@ export default function BrainstormPage() {
   const [briefs,         setBriefs]         = useState([]);
   const [selectedBriefId, setSelectedBriefId] = useState(null);
   const [pendingCapture, setPendingCapture] = useState(null);
-  const [pendingRevision, setPendingRevision] = useState(null); // { captureId, title, content }
+  const [pendingRevision, setPendingRevision] = useState(null);
   const [editingCaptureId, setEditingCaptureId] = useState(null);
   const [capturesSnapshotIds, setCapturesSnapshotIds] = useState(null);
   const [activeTab, setActiveTab] = useState("chat");
@@ -1185,7 +1181,6 @@ export default function BrainstormPage() {
 
   const dismissCapture = () => setPendingCapture(null);
 
-  // ── Capture editing flow ────────────────────────────────────────────────
   const startEditingCapture = (captureId) => {
     setEditingCaptureId(captureId);
     setPendingCapture(null);
@@ -1202,7 +1197,6 @@ export default function BrainstormPage() {
     const capture = captures.find((c) => c.id === editingCaptureId);
     if (!capture) return;
 
-    // Fast path: manual edits only, no AI instructions → save directly
     if (manuallyChanged && !hasInstructions) {
       const updated = { ...capture, title, content, updatedAt: new Date().toISOString() };
       setCaptures((prev) => prev.map((c) => (c.id === capture.id ? updated : c)));
@@ -1211,7 +1205,6 @@ export default function BrainstormPage() {
       return;
     }
 
-    // AI path: call API with instructions, show pending revision card
     try {
       const revSystem = buildRevisionPrompt({
         captureType: capture.type,
@@ -1240,16 +1233,13 @@ export default function BrainstormPage() {
           content: revision.content,
         });
       } else {
-        // AI didn't return a valid marker — fall back to saving manual edits if any
         if (manuallyChanged) {
           const updated = { ...capture, title, content, updatedAt: new Date().toISOString() };
           setCaptures((prev) => prev.map((c) => (c.id === capture.id ? updated : c)));
           setEditingCaptureId(null);
         }
       }
-    } catch {
-      // Silently fail; editor stays open for retry
-    }
+    } catch {}
   };
 
   const approveRevision = () => {
@@ -1265,7 +1255,6 @@ export default function BrainstormPage() {
 
   const rejectRevision = () => setPendingRevision(null);
 
-  // ── Brief synthesis & versioning ────────────────────────────────────────
   const synthesizeNewBriefVersion = async () => {
     setSynthesizing(true);
     try {
@@ -1604,6 +1593,7 @@ What would you like to revisit? We can revise any of the captures, dig deeper on
   }
 
   const editingCapture = editingCaptureId ? captures.find((c) => c.id === editingCaptureId) : null;
+  const chatDisabled = !!editingCapture || !!pendingRevision;
 
   return (
     <Layout title="Brainstorm" logoSrc="/brainstorm-logo.png">
@@ -1649,8 +1639,9 @@ What would you like to revisit? We can revise any of the captures, dig deeper on
                     messages={displayMessages}
                     loading={chatLoading}
                     onSend={sendMessage}
-                    placeholder="Type a message…"
+                    placeholder={chatDisabled ? "Finish editing the capture first…" : "Type a message…"}
                     inlineActions={inlineActions}
+                    disabled={chatDisabled}
                   />
 
                   {editingCapture && (
@@ -1828,22 +1819,22 @@ const cc = {
 };
 
 const cep = {
-  wrap: { background: theme.surface, border: `1px solid ${theme.red}`, borderRadius: 10, padding: "16px 18px", marginBottom: 16, marginTop: 8, borderLeft: `4px solid ${theme.red}` },
-  header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+  wrap: { background: "#1a1a1a", border: `2px solid ${theme.red}`, borderRadius: 10, padding: "18px 20px", marginBottom: 16, marginTop: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.5)" },
+  header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${theme.border}` },
   headerLabel: { fontSize: 11, fontWeight: 700, letterSpacing: 2, color: theme.red, textTransform: "uppercase" },
   cancelTopBtn: { background: "transparent", border: "none", color: theme.textDim, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
-  instructions: { fontSize: 12, color: theme.textMuted, lineHeight: 1.6, marginBottom: 12, marginTop: 0 },
-  label: { display: "block", fontSize: 11, fontWeight: 700, color: theme.textMuted, marginBottom: 4, marginTop: 10, textTransform: "uppercase", letterSpacing: 1 },
-  input: { width: "100%", background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, padding: "8px 12px", fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box" },
-  textarea: { width: "100%", background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, padding: "8px 12px", fontSize: 13, fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.5 },
-  aiInput: { width: "100%", background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, padding: "8px 12px", fontSize: 13, fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box", resize: "vertical", fontStyle: "italic" },
-  actions: { display: "flex", gap: 8, marginTop: 14, justifyContent: "flex-end" },
+  instructions: { fontSize: 12, color: theme.textMuted, lineHeight: 1.6, marginBottom: 14, marginTop: 0 },
+  label: { display: "block", fontSize: 11, fontWeight: 700, color: theme.textMuted, marginBottom: 4, marginTop: 12, textTransform: "uppercase", letterSpacing: 1 },
+  input: { width: "100%", background: "#0a0a0a", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, padding: "9px 12px", fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box" },
+  textarea: { width: "100%", background: "#0a0a0a", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, padding: "9px 12px", fontSize: 13, fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box", resize: "vertical", lineHeight: 1.5 },
+  aiInput: { width: "100%", background: "#0a0a0a", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, padding: "9px 12px", fontSize: 13, fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box", resize: "vertical", fontStyle: "italic" },
+  actions: { display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" },
   cancelBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "8px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   submitBtn: { background: theme.red, border: "none", borderRadius: 6, color: "#fff", padding: "8px 16px", fontSize: 12, fontWeight: 700, fontFamily: "'DM Sans', sans-serif" },
 };
 
 const rev = {
-  wrap: { background: theme.surface, border: `1px solid ${theme.red}`, borderRadius: 10, padding: "14px 18px", marginBottom: 16, marginTop: 8 },
+  wrap: { background: "#1a1a1a", border: `2px solid ${theme.red}`, borderRadius: 10, padding: "16px 18px", marginBottom: 16, marginTop: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.5)" },
   head: { fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: theme.red, textTransform: "uppercase", marginBottom: 8 },
   title: { fontSize: 14, fontWeight: 700, color: theme.text, marginBottom: 6 },
   content: { fontSize: 13, color: theme.textMuted, lineHeight: 1.6, marginBottom: 14 },
