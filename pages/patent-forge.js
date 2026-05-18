@@ -105,7 +105,7 @@ function StickyActionBar({ children, justSaved }) {
   );
 }
 
-ffunction InventorSection({ data, setData, onNext, profileName, profileCity, profileState, profileCountry, profileEmail, justSaved }) {
+function InventorSection({ data, setData, onNext, profileName, profileCity, profileState, profileCountry, profileEmail, justSaved }) {
   const [name, setName]       = useState(data.inventorName || "");
   const [city, setCity]       = useState(data.city || profileCity || "");
   const [stateVal, setStateVal] = useState(data.state || profileState || "");
@@ -120,9 +120,11 @@ ffunction InventorSection({ data, setData, onNext, profileName, profileCity, pro
       <p style={ps.desc}>This is who will be named on the provisional patent application.</p>
       {greetingLine && <div style={hf.infoBar}>{greetingLine}</div>}
       {data.fromBrainstorm && <div style={hf.infoBar}>💡 Your Brainstorm session has been pre-loaded — title, field, and brief are ready in the next steps.</div>}
+
       <label style={ps.label}>Full Legal Name</label>
       <input style={ps.input} value={name} onChange={e => setName(e.target.value)} placeholder="e.g., Jane M. Smith — or your handle" />
       <p style={ps.helper}>Your handle works here too. The USPTO will need your legal name at filing, but you can keep it private in Patent Forge and add it to the filing documents you download later.</p>
+
       <label style={ps.label}>City</label><input style={ps.input} value={city} onChange={e => setCity(e.target.value)} placeholder="e.g., Decatur" />
       <label style={ps.label}>State / Province</label><input style={ps.input} value={stateVal} onChange={e => setStateVal(e.target.value)} placeholder="e.g., Georgia" />
       <label style={ps.label}>Country</label><input style={ps.input} value={country} onChange={e => setCountry(e.target.value)} />
@@ -302,17 +304,14 @@ export default function PatentForgePage() {
       const cleanName = (profile?.name || "").trim();
       setHandle(cleanName || "Inventor");
       setProfileName(cleanName);
-      // Future Phase 2: pull from profile.profile_categories or new profile columns when added
       setProfileCity(profile?.profile_categories?.city || "");
       setProfileState(profile?.profile_categories?.state || "");
       setProfileCountry(profile?.profile_categories?.country || "");
       setProfileEmail(profile?.profile_categories?.email || "");
 
-      // Check whether this user has any Patent Forge history at all
       const { data: priorProjects } = await supabase.from(TABLE).select("id, data").eq("user_id", userId);
       const noPriorProjects = !priorProjects || priorProjects.length === 0;
       setIsFirstTimeUser(noPriorProjects);
-      // Check whether they've ever agreed to the vision in any project
       const everAgreed = Array.isArray(priorProjects) && priorProjects.some(p => p?.data?.agreed === true);
       setHasAgreedBefore(everAgreed);
     };
