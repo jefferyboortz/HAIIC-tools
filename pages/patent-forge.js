@@ -3,21 +3,32 @@ import { useRouter } from "next/router";
 import supabase from "../lib/supabaseClient";
 import Layout from "../components/Layout";
 import ChatThread from "../components/ChatThread";
-import useChat from "../components/useChat";
 import theme from "../components/theme";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CONSTANTS
+// ─────────────────────────────────────────────────────────────────────────────
 const SECTIONS = [
-  { id: "inventor",    label: "Inventor Info",  icon: "①" },
-  { id: "agreement",   label: "Our Vision",     icon: "②" },
-  { id: "title",       label: "Title & Field",  icon: "③" },
-  { id: "description", label: "Description",    icon: "④" },
-  { id: "claims",      label: "Claims",         icon: "⑤" },
-  { id: "review",      label: "Filing Package", icon: "★" },
+  { id: "inventor",   label: "Inventor Info",  icon: "①" },
+  { id: "agreement",  label: "Our Vision",     icon: "②" },
+  { id: "title",      label: "Title & Field",  icon: "③" },
+  { id: "drafting",   label: "Drafting",       icon: "④" },
+  // Filing Package chip is hidden in Push 2a; restored in Push 2b
 ];
 
 const HANDOFF_KEY    = "haiic_pf_handoff";
 const TABLE          = "patent_projects";
 const BRAINSTORM_TBL = "brainstorm_projects";
+
+const PHASES = ["describe", "claim"];
+const PHASE_LABELS = { describe: "Describe", claim: "Claim" };
+
+const CAPTURE_TYPES = ["description_block", "claimable_concept", "claim"];
+const CAPTURE_LABELS = {
+  description_block: "Description Block",
+  claimable_concept: "Claimable Concept",
+  claim: "Claim",
+};
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -26,53 +37,872 @@ function briefDisplayName(brief) {
   return (brief.label && brief.label.trim()) || `Brief v${brief.versionNumber}`;
 }
 
-async function exportToDocx(project) {
-  const { name, data, section } = project;
-  const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Header, Footer, PageNumber, TabStopType, TabStopPosition } = await import("docx");
-  const RED = "C0392B", GRAY = "666666", BLACK = "1A1A1A";
-  const spacer = (sz = 160) => new Paragraph({ children: [new TextRun("")], spacing: { after: sz } });
-  const sh = (text) => new Paragraph({ heading: HeadingLevel.HEADING_2, spacing: { before: 360, after: 120 }, border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: RED, space: 4 } }, children: [new TextRun({ text, color: RED, bold: true, font: "Arial", size: 26 })] });
-  const bt = (text, opts = {}) => new Paragraph({ spacing: { after: 80 }, children: [new TextRun({ text, font: "Arial", size: 20, color: GRAY, ...opts })] });
-  const lv = (label, value) => new Paragraph({ spacing: { after: 80 }, children: [new TextRun({ text: `${label}  `, bold: true, font: "Arial", size: 20, color: BLACK }), new TextRun({ text: value || "—", font: "Arial", size: 20, color: GRAY })] });
-  const rd = (raw) => {
-    if (!raw) return [];
-    return raw.split("\n").flatMap(line => {
-      const t = line.trim(); if (!t || t.startsWith("[SYSTEM:")) return [];
-      const isA = t.startsWith("assistant:"), isU = t.startsWith("user:");
-      const role = isA ? "AI Assistant" : isU ? "Inventor" : null;
-      const body = role ? t.slice(t.indexOf(":") + 1).trim() : t;
-      return [new Paragraph({ spacing: { after: 60 }, children: [...(role ? [new TextRun({ text: `${role}:  `, bold: true, color: isA ? RED : BLACK, font: "Arial", size: 20 })] : []), new TextRun({ text: body, font: "Arial", size: 20, color: GRAY })] })];
-    });
-  };
-  const children = [];
-  children.push(new Paragraph({ alignment: AlignmentType.LEFT, spacing: { after: 40 }, children: [new TextRun({ text: "HUMAN-AI INNOVATION COMMONS", font: "Arial", size: 18, bold: true, color: RED, allCaps: true })] }), new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { after: 80 }, children: [new TextRun({ text: data.patentTitle || name || "Provisional Patent Application", font: "Arial", size: 40, bold: true, color: BLACK })] }), lv("Inventor:", data.inventorName), lv("Location:", [data.city, data.state, data.country].filter(Boolean).join(", ")), lv("Date:", new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })), lv("Stage:", SECTIONS[section]?.label || "Complete"), spacer(320));
-  children.push(sh("Our Shared Vision"), spacer(80), bt("HAIIC was built on the belief that when AI helps create something valuable, the wealth it generates should flow back to the people AI affects most. Patent Forge is free because democratizing invention is the right thing to do — no fine print, no hidden fees, no claiming ownership of your idea."), spacer(80), bt("The model we live by distributes value equally: one third to the inventor; one third to programs supporting workers displaced by AI; and one third to AI safety research."), spacer(80), bt("This is our compass, not a clause. The invention belongs to its inventor. But if it succeeds, we hope they'll remember where the idea started — and consider paying it forward.", { italics: true, color: "888888" }), spacer(80), lv("Inventor:", data.inventorName || "—"), lv("Date:", new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })), spacer(160));
-  if (data.patentTitle || data.patentField || data.summary) { children.push(sh("Title & Field of Invention"), spacer(80)); if (data.patentTitle) children.push(lv("Title:", data.patentTitle)); if (data.patentField) children.push(lv("Field:", data.patentField)); if (data.summary) children.push(new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: "Summary:", bold: true, font: "Arial", size: 20, color: BLACK })] }), bt(data.summary)); children.push(spacer(160)); }
-  if (data.noveltyAssessment) children.push(sh("Novelty & Patentability Assessment"), spacer(80), ...data.noveltyAssessment.split("\n").map(line => new Paragraph({ spacing: { after: 60 }, children: [new TextRun({ text: line, font: "Arial", size: 20, color: GRAY })] })), spacer(160));
-  if (data.descriptionDiscussion) children.push(sh("Detailed Description — Working Session"), spacer(80), ...rd(data.descriptionDiscussion), spacer(160));
-  if (data.claimsDiscussion) children.push(sh("Patent Claims — Working Session"), spacer(80), ...rd(data.claimsDiscussion), spacer(160));
-  if (data.filingDocument) { children.push(new Paragraph({ children: [new TextRun("")], pageBreakBefore: true }), new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 240 }, children: [new TextRun({ text: "PROVISIONAL PATENT APPLICATION", font: "Arial", size: 28, bold: true, color: BLACK, allCaps: true })] }), spacer(80), ...data.filingDocument.split("\n").map(line => { const t = line.trim(); const isH = /^[A-Z][A-Z\s]{4,}$/.test(t) && t.length < 60; return new Paragraph({ spacing: { after: t === "" ? 120 : 60 }, ...(isH ? { heading: HeadingLevel.HEADING_2 } : {}), children: [new TextRun({ text: line, font: "Arial", size: isH ? 22 : 20, bold: isH, color: isH ? RED : GRAY })] }); })); }
-  const doc = new Document({ styles: { default: { document: { run: { font: "Arial", size: 22 } } }, paragraphStyles: [{ id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 40, bold: true, font: "Arial", color: BLACK }, paragraph: { spacing: { before: 0, after: 160 }, outlineLevel: 0 } }, { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 26, bold: true, font: "Arial", color: RED }, paragraph: { spacing: { before: 360, after: 120 }, outlineLevel: 1 } }] }, sections: [{ properties: { page: { size: { width: 12240, height: 15840 }, margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } } }, headers: { default: new Header({ children: [new Paragraph({ tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }], border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: RED, space: 4 } }, children: [new TextRun({ text: "HAIIC Patent Forge", font: "Arial", size: 18, color: RED, bold: true }), new TextRun({ text: "\tapps-haiic.com", font: "Arial", size: 18, color: GRAY })] })] }) }, footers: { default: new Footer({ children: [new Paragraph({ tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }], children: [new TextRun({ text: "Human-AI Innovation Commons  ·  Co-authored with Claude", font: "Arial", size: 16, color: GRAY }), new TextRun({ children: ["\t", PageNumber.CURRENT], font: "Arial", size: 16, color: GRAY })] })] }) }, children }] });
-  const blob = await Packer.toBlob(doc); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `HAIIC-PatentForge-${(data.patentTitle || name || "patent").replace(/[^a-z0-9]/gi, "-").toLowerCase()}.docx`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+// ─────────────────────────────────────────────────────────────────────────────
+// SYSTEM PROMPTS
+// ─────────────────────────────────────────────────────────────────────────────
+function buildDraftingSystemPrompt({ project, captures, currentPhase, fromBrainstorm, brainstormBrief }) {
+  const data = project.data || {};
+  const title = data.patentTitle || "(untitled)";
+  const field = data.patentField || "(unspecified field)";
+  const summary = data.summary || "";
+  const inventor = data.inventorName || "the inventor";
+
+  const descBlocks = captures.filter(c => c.type === "description_block" && c.approved);
+  const claimables = captures.filter(c => c.type === "claimable_concept");
+  const drafted = captures.filter(c => c.type === "claim" && c.approved);
+
+  const phaseGuide = currentPhase === "describe"
+    ? `YOU ARE IN THE DESCRIBE PHASE.
+- Help ${inventor} walk through how the invention works in detail.
+- Ask follow-up questions about components, mechanisms, materials, alternative embodiments.
+- When you have enough material for a coherent description chunk (e.g., a component, a mechanism, an embodiment), propose a description capture using the [CAPTURE_PROPOSED] marker described below.
+- When you notice something that looks potentially claimable — a novel mechanism, a unique combination, a non-obvious method — note it inline conversationally AND silently capture it using the [CLAIMABLE_NOTED] marker.
+- Do NOT draft claims in this phase. Claim drafting happens in the next phase.
+- When the conversation has produced substantial description blocks AND multiple claimable concepts (typically 3+ description blocks and 2+ claimable concepts), suggest moving to the claim phase.`
+    : `YOU ARE IN THE CLAIM PHASE.
+- The describe phase is complete. You have ${descBlocks.length} approved description blocks and ${claimables.length} claimable concepts to work from.
+- Your job is to draft claims for ${inventor}. ${inventor} is not a patent attorney and does not know the difference between independent and dependent claims — handle the structure for them.
+- Draft a complete set of claims: one broad independent claim that captures the core invention, then 2-4 dependent claims that narrow it usefully.
+- Propose each claim as a capture using the [CAPTURE_PROPOSED] marker with type "claim". Include both formal patent language AND a plain-English version of each claim.
+- After drafting, invite ${inventor} to react. Help them refine specific claims based on their feedback.
+- Do NOT propose new description_block or claimable_concept captures in this phase.`;
+
+  const captureGuide = `
+CAPTURE MARKERS
+
+When you want to propose a description block or a claim for approval, use:
+[CAPTURE_PROPOSED]
+{"type":"description_block","title":"...","content":"..."}
+[/CAPTURE_PROPOSED]
+
+For a claim, the title is "Claim N" (you'll be numbering them in order):
+[CAPTURE_PROPOSED]
+{"type":"claim","title":"Claim 1","content":"Formal claim language.\\n\\nPlain English: ..."}
+[/CAPTURE_PROPOSED]
+
+When you notice something claimable mid-conversation, capture it silently with:
+[CLAIMABLE_NOTED]
+{"title":"...","content":"What makes this potentially claimable: ..."}
+[/CLAIMABLE_NOTED]
+
+Mention the claimable concept conversationally in the same message ("That's interesting — I noted it as a claimable concept for us to come back to"), but the [CLAIMABLE_NOTED] marker captures it silently to the sidebar without interrupting the user.
+
+CRITICAL RULES
+- In the describe phase, ONLY propose description_block captures or note claimable_concept captures. Do NOT propose claim captures in describe phase.
+- In the claim phase, ONLY propose claim captures. Do NOT propose description_block or claimable_concept captures in claim phase.
+- One marker per turn maximum unless the user has explicitly asked for multiple items.
+- Always continue the conversation in natural language alongside any markers.`;
+
+  const contextBlock = `
+INVENTION CONTEXT
+- Title: ${title}
+- Field: ${field}
+- Summary: ${summary || "(not provided)"}
+- Inventor: ${inventor}
+${fromBrainstorm && brainstormBrief ? `
+PRIOR BRAINSTORM BRIEF (for your context, do not quote directly):
+${brainstormBrief.substring(0, 2000)}` : ""}
+
+CURRENT CAPTURE STATE
+- Approved description blocks: ${descBlocks.length}
+  ${descBlocks.map(c => `  • ${c.title}`).join("\n") || "  (none yet)"}
+- Claimable concepts noted: ${claimables.length}
+  ${claimables.map(c => `  • ${c.title}`).join("\n") || "  (none yet)"}
+- Drafted claims approved: ${drafted.length}`;
+
+  return `You are a patent drafting collaborator at HAIIC, helping inventors who are NOT patent attorneys draft provisional patent applications. Tone: warm, plain-English, never condescending. Translate jargon. Push for detail that lets someone in the field reproduce the invention. ${inventor} should never need to know terms like "independent claim" vs "dependent claim" — handle the structure for them.
+
+${contextBlock}
+
+${phaseGuide}
+
+${captureGuide}`;
 }
 
-function NoveltyAdvisor({ data, context, onSave }) {
-  const [open, setOpen] = useState(false); const [assessment, setAssessment] = useState(data.noveltyAssessment || null); const [loading, setLoading] = useState(false); const [followUp, setFollowUp] = useState(""); const [thread, setThread] = useState(data.noveltyThread || []);
-  const sys = `You are a knowledgeable friend who has been through the patent process. Give inventors an honest, plain-English read on novelty and patentability — and concrete suggestions to strengthen it. Tone: honest but encouraging.\n\n🔍 THE HONEST READ\nOne paragraph.\n\n✅ WHAT'S WORKING\n2-3 specific strengths.\n\n⚠️ WATCH OUT FOR\n1-2 prior art concerns.\n\n💡 HOW TO STRENGTHEN IT\n2-3 actionable suggestions.\n\nEnd with: "Remember: the first idea is rarely the best — every refinement gets you closer. This is a starting point, not a verdict. A registered patent attorney can run a full prior art search before you file."`;
-  const run = async () => { setLoading(true); try { const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ system: sys, messages: [{ role: "user", content: `Assess:\n\n${context}` }], max_tokens: 900 }) }); const r = await res.json(); const text = r.content?.map(i => i.type === "text" ? i.text : "").join("\n") || "Unable to generate."; setAssessment(text); const nt = [{ role: "assistant", content: text }]; setThread(nt); onSave({ noveltyAssessment: text, noveltyThread: nt }); } catch { setAssessment("Unable to generate."); } finally { setLoading(false); } };
-  const ask = async () => { if (!followUp.trim() || loading) return; const um = { role: "user", content: followUp }; const nt = [...thread, um]; setThread(nt); setFollowUp(""); setLoading(true); try { const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ system: sys, messages: [{ role: "user", content: `Context:\n\n${context}` }, ...nt], max_tokens: 600 }) }); const r = await res.json(); const text = r.content?.map(i => i.type === "text" ? i.text : "").join("\n") || "Unable to respond."; const updated = [...nt, { role: "assistant", content: text }]; setThread(updated); onSave({ noveltyAssessment: assessment, noveltyThread: updated }); } catch {} finally { setLoading(false); } };
+function buildNoveltyPrompt(captures) {
+  const descBlocks = captures.filter(c => c.type === "description_block" && c.approved);
+  const claimables = captures.filter(c => c.type === "claimable_concept");
+  const claims = captures.filter(c => c.type === "claim" && c.approved);
+
+  return `You are a knowledgeable friend who has been through the patent process. Give an honest, plain-English read on novelty and patentability based on what the inventor has captured so far.
+
+You MUST start your response with a single integer between 1 and 10 inside [SCORE] tags, like this: [SCORE]4[/SCORE]
+
+Scoring guide:
+- 1-2: Nothing claimable yet (almost no captures, or only restatements of common knowledge)
+- 3-4: Early — something potentially novel but underspecified
+- 5-6: Promising — clear novel elements, needs more detail to be defensible
+- 7-8: Strong — distinctive mechanism, well-specified, plausibly defensible against prior art
+- 9-10: Excellent — clearly novel, well-described, multiple claimable angles
+
+After the score, provide:
+
+🔍 THE HONEST READ
+One paragraph.
+
+✅ WHAT'S WORKING
+2-3 specific strengths.
+
+⚠️ WATCH OUT FOR
+1-2 prior art concerns.
+
+💡 HOW TO STRENGTHEN IT
+2-3 actionable suggestions.
+
+End with: "Remember: the first idea is rarely the best — every refinement gets you closer. This is a starting point, not a verdict. A registered patent attorney can run a full prior art search before you file."
+
+CAPTURES TO ASSESS:
+
+Description Blocks (${descBlocks.length}):
+${descBlocks.map(c => `• ${c.title}: ${c.content}`).join("\n") || "(none)"}
+
+Claimable Concepts (${claimables.length}):
+${claimables.map(c => `• ${c.title}: ${c.content}`).join("\n") || "(none)"}
+
+Drafted Claims (${claims.length}):
+${claims.map(c => `• ${c.title}: ${c.content}`).join("\n") || "(none)"}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MARKER PARSING
+// ─────────────────────────────────────────────────────────────────────────────
+function parseMarkers(text) {
+  const proposals = [];
+  const claimables = [];
+
+  const proposedRe = /\[CAPTURE_PROPOSED\]([\s\S]*?)\[\/CAPTURE_PROPOSED\]/g;
+  let m;
+  while ((m = proposedRe.exec(text)) !== null) {
+    try {
+      const parsed = JSON.parse(m[1].trim());
+      if (parsed.type && parsed.title && parsed.content) proposals.push(parsed);
+    } catch {}
+  }
+
+  const claimableRe = /\[CLAIMABLE_NOTED\]([\s\S]*?)\[\/CLAIMABLE_NOTED\]/g;
+  while ((m = claimableRe.exec(text)) !== null) {
+    try {
+      const parsed = JSON.parse(m[1].trim());
+      if (parsed.title && parsed.content) claimables.push(parsed);
+    } catch {}
+  }
+
+  const cleanText = text.replace(proposedRe, "").replace(claimableRe, "").trim();
+
+  return { proposals, claimables, cleanText };
+}
+
+function parseScore(text) {
+  const m = text.match(/\[SCORE\](\d+)\[\/SCORE\]/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  if (isNaN(n) || n < 1 || n > 10) return null;
+  return n;
+}
+
+function stripScore(text) {
+  return text.replace(/\[SCORE\]\d+\[\/SCORE\]/, "").trim();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SIDEBAR
+// ─────────────────────────────────────────────────────────────────────────────
+function PatentForgeSidebar({ captures, currentPhase, onEditCapture, onDeleteCapture, onPhaseTransition }) {
+  const grouped = {
+    description_block: captures.filter(c => c.type === "description_block"),
+    claimable_concept: captures.filter(c => c.type === "claimable_concept"),
+    claim: captures.filter(c => c.type === "claim"),
+  };
+
+  const canAdvance = currentPhase === "describe"
+    && grouped.description_block.filter(c => c.approved).length >= 2
+    && grouped.claimable_concept.length >= 1;
+
   return (
-    <div style={na.wrap}>
-      <button onClick={() => setOpen(o => !o)} style={na.toggle}>🔬 Novelty Advisor &nbsp;{open ? "▲" : "▼"}{assessment && <span style={na.badge}>✓ Ready</span>}</button>
-      {open && (<div style={na.panel}><p style={na.intro}>An honest read on patentability — and exactly what to do to strengthen it.</p>{!assessment && !loading && <button onClick={run} style={na.runBtn}>Check Novelty & Patentability →</button>}{loading && <p style={na.loadingMsg}>Analyzing…</p>}{assessment && (<><div style={na.result}><pre style={na.resultText}>{thread[0]?.content || assessment}</pre></div>{thread.length > 1 && <div style={na.threadWrap}>{thread.slice(1).map((m, i) => (<div key={i} style={{ ...na.msg, background: m.role === "user" ? "transparent" : theme.surfaceAlt }}><span style={{ ...na.msgRole, color: m.role === "assistant" ? theme.red : theme.text }}>{m.role === "assistant" ? "Advisor" : "You"}:{"  "}</span><span style={na.msgText}>{m.content}</span></div>))}</div>}<div style={na.followRow}><input style={na.followInput} value={followUp} onChange={e => setFollowUp(e.target.value)} onKeyDown={e => e.key === "Enter" && ask()} placeholder="Ask a follow-up…" disabled={loading} /><button onClick={ask} disabled={loading || !followUp.trim()} style={na.askBtn}>Ask →</button></div><button onClick={run} style={na.rerunBtn}>↻ Re-run</button></>)}</div>)}
+    <div style={sb.wrap}>
+      <div style={sb.section}>
+        <p style={sb.sectionLabel}>PHASE</p>
+        <div style={sb.phaseList}>
+          {PHASES.map(p => {
+            const isCurrent = p === currentPhase;
+            const isPast = PHASES.indexOf(p) < PHASES.indexOf(currentPhase);
+            return (
+              <div key={p} style={{
+                ...sb.phaseItem,
+                color: isCurrent ? theme.red : isPast ? theme.textMuted : theme.textDim,
+                fontWeight: isCurrent ? 700 : 500,
+                textDecoration: isPast ? "line-through" : "none",
+              }}>
+                {isPast ? "✓" : isCurrent ? "●" : "○"} {PHASE_LABELS[p]}
+              </div>
+            );
+          })}
+        </div>
+        {canAdvance && (
+          <button onClick={onPhaseTransition} style={sb.advanceBtn}>
+            Move to Claim Phase →
+          </button>
+        )}
+      </div>
+
+      {CAPTURE_TYPES.map(type => {
+        const items = grouped[type];
+        if (items.length === 0 && type === "claim" && currentPhase === "describe") return null;
+        return (
+          <div key={type} style={sb.section}>
+            <p style={sb.sectionLabel}>
+              {CAPTURE_LABELS[type].toUpperCase()}S {items.length > 0 && <span style={sb.count}>({items.length})</span>}
+            </p>
+            {items.length === 0 ? (
+              <p style={sb.emptyHint}>
+                {type === "description_block" && "Describe how your invention works — I'll capture pieces as we go."}
+                {type === "claimable_concept" && "I'll flag claimable concepts as I notice them."}
+                {type === "claim" && "Claims will be drafted in the claim phase."}
+              </p>
+            ) : (
+              <div style={sb.list}>
+                {items.map(c => (
+                  <div key={c.id} style={sb.card}>
+                    <div style={sb.cardHeader}>
+                      <div style={sb.cardTitle}>{c.title}</div>
+                      <div style={sb.cardActions}>
+                        <button onClick={() => onEditCapture(c)} style={sb.iconBtn} title="Edit">✏</button>
+                        <button onClick={() => onDeleteCapture(c)} style={sb.iconBtn} title="Delete">✕</button>
+                      </div>
+                    </div>
+                    <div style={sb.cardContent}>{c.content.substring(0, 140)}{c.content.length > 140 ? "…" : ""}</div>
+                    {!c.approved && type !== "claimable_concept" && (
+                      <div style={sb.pendingTag}>Pending approval</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BRAINSTORM IMPORT PICKER
-// Shows all Brainstorm projects. Projects without briefs are dimmed and show
-// inline guidance when clicked.
+// NOVELTY ADVISOR (live tracker)
+// ─────────────────────────────────────────────────────────────────────────────
+function NoveltyAdvisor({ captures, savedScore, savedAssessment, savedThread, onSave }) {
+  const [open, setOpen]               = useState(false);
+  const [score, setScore]             = useState(savedScore ?? 1);
+  const [prevScore, setPrevScore]     = useState(savedScore ?? 1);
+  const [direction, setDirection]     = useState(null); // "up" | "down" | null
+  const [assessment, setAssessment]   = useState(savedAssessment || "");
+  const [thread, setThread]           = useState(savedThread || []);
+  const [loading, setLoading]         = useState(false);
+  const [followUp, setFollowUp]       = useState("");
+  const debounceRef                   = useRef(null);
+  const lastCapturesHashRef           = useRef("");
+
+  // Watch captures and re-score in the background, debounced
+  useEffect(() => {
+    const capturesHash = JSON.stringify(captures.map(c => ({ id: c.id, content: c.content, approved: c.approved })));
+    if (capturesHash === lastCapturesHashRef.current) return;
+    if (captures.length === 0) return; // No captures yet, stay at initial score
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      lastCapturesHashRef.current = capturesHash;
+      await runScore();
+    }, 2000);
+
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [captures]);
+
+  const runScore = async () => {
+    if (loading) return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system: buildNoveltyPrompt(captures),
+          messages: [{ role: "user", content: "Score and assess." }],
+          max_tokens: 900,
+        }),
+      });
+      const r = await res.json();
+      const text = r.content?.map(i => i.type === "text" ? i.text : "").join("\n") || "";
+      const newScore = parseScore(text) ?? score;
+      const newAssessment = stripScore(text);
+      const newThread = [{ role: "assistant", content: newAssessment }];
+
+      setPrevScore(score);
+      if (newScore > score) setDirection("up");
+      else if (newScore < score) setDirection("down");
+      else setDirection(null);
+
+      setScore(newScore);
+      setAssessment(newAssessment);
+      setThread(newThread);
+      onSave({ noveltyScore: newScore, noveltyAssessment: newAssessment, noveltyThread: newThread });
+
+      // Clear direction indicator after 3 seconds
+      setTimeout(() => setDirection(null), 3000);
+    } catch {} finally {
+      setLoading(false);
+    }
+  };
+
+  const ask = async () => {
+    if (!followUp.trim() || loading) return;
+    const um = { role: "user", content: followUp };
+    const nt = [...thread, um];
+    setThread(nt);
+    setFollowUp("");
+    setLoading(true);
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system: buildNoveltyPrompt(captures),
+          messages: [{ role: "user", content: "Score and assess." }, ...nt],
+          max_tokens: 600,
+        }),
+      });
+      const r = await res.json();
+      const text = r.content?.map(i => i.type === "text" ? i.text : "").join("\n") || "Unable to respond.";
+      const updated = [...nt, { role: "assistant", content: text }];
+      setThread(updated);
+      onSave({ noveltyScore: score, noveltyAssessment: assessment, noveltyThread: updated });
+    } catch {} finally {
+      setLoading(false);
+    }
+  };
+
+  const scoreColor = score >= 7 ? "#80ff99" : score >= 4 ? "#ffd166" : theme.red;
+
+  return (
+    <div style={na.wrap}>
+      <button onClick={() => setOpen(o => !o)} style={na.toggle}>
+        <span>🔬 Novelty Advisor</span>
+        <span style={{ ...na.scoreInline, color: scoreColor }}>
+          {score}/10
+          {direction === "up" && <span style={{ color: "#80ff99", marginLeft: 4 }}>↑</span>}
+          {direction === "down" && <span style={{ color: theme.red, marginLeft: 4 }}>↓</span>}
+        </span>
+        <span style={{ marginLeft: "auto" }}>{open ? "▲" : "▼"}</span>
+      </button>
+
+      {open && (
+        <div style={na.panel}>
+          <p style={na.intro}>
+            An honest read on patentability that updates as you describe more. The score is directional — a single AI's read, not a guarantee.
+          </p>
+
+          {loading && <p style={na.loadingMsg}>Assessing…</p>}
+
+          {!loading && captures.length === 0 && (
+            <p style={na.loadingMsg}>Add some description and I'll start scoring.</p>
+          )}
+
+          {assessment && (
+            <>
+              <div style={na.result}>
+                <pre style={na.resultText}>{thread[0]?.content || assessment}</pre>
+              </div>
+
+              {thread.length > 1 && (
+                <div style={na.threadWrap}>
+                  {thread.slice(1).map((m, i) => (
+                    <div key={i} style={{ ...na.msg, background: m.role === "user" ? "transparent" : theme.surfaceAlt }}>
+                      <span style={{ ...na.msgRole, color: m.role === "assistant" ? theme.red : theme.text }}>
+                        {m.role === "assistant" ? "Advisor" : "You"}:{"  "}
+                      </span>
+                      <span style={na.msgText}>{m.content}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={na.followRow}>
+                <input
+                  style={na.followInput}
+                  value={followUp}
+                  onChange={e => setFollowUp(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && ask()}
+                  placeholder="Ask a follow-up…"
+                  disabled={loading}
+                />
+                <button onClick={ask} disabled={loading || !followUp.trim()} style={na.askBtn}>Ask →</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CAPTURE EDIT PANEL
+// ─────────────────────────────────────────────────────────────────────────────
+function CaptureEditPanel({ capture, onSave, onCancel }) {
+  const [title, setTitle]         = useState(capture.title);
+  const [content, setContent]     = useState(capture.content);
+  const [instructions, setInstr]  = useState("");
+  const [loading, setLoading]     = useState(false);
+  const [pendingRevision, setPR]  = useState(null);
+
+  const buildRevisionPrompt = () => `You are revising a captured note for a patent draft. Apply the user's revision instructions.
+
+ORIGINAL CAPTURE
+Title: ${capture.title}
+Content: ${capture.content}
+
+USER'S EDITS SO FAR
+Title: ${title}
+Content: ${content}
+
+USER'S REVISION INSTRUCTIONS
+${instructions}
+
+Respond with ONLY the revised capture in this exact format:
+[REVISION]
+{"title":"...","content":"..."}
+[/REVISION]`;
+
+  const handleSave = async () => {
+    if (instructions.trim()) {
+      setLoading(true);
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            system: buildRevisionPrompt(),
+            messages: [{ role: "user", content: "Apply the revision." }],
+            max_tokens: 1500,
+          }),
+        });
+        const r = await res.json();
+        const text = r.content?.map(i => i.type === "text" ? i.text : "").join("\n") || "";
+        const m = text.match(/\[REVISION\]([\s\S]*?)\[\/REVISION\]/);
+        if (m) {
+          const parsed = JSON.parse(m[1].trim());
+          setPR(parsed);
+        } else {
+          alert("Couldn't parse the revision. Saving your manual edits instead.");
+          onSave({ ...capture, title, content, updatedAt: new Date().toISOString() });
+        }
+      } catch {
+        alert("Revision failed. Saving your manual edits instead.");
+        onSave({ ...capture, title, content, updatedAt: new Date().toISOString() });
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      onSave({ ...capture, title, content, updatedAt: new Date().toISOString() });
+    }
+  };
+
+  const acceptRevision = () => {
+    onSave({ ...capture, title: pendingRevision.title, content: pendingRevision.content, updatedAt: new Date().toISOString() });
+  };
+
+  const rejectRevision = () => setPR(null);
+
+  return (
+    <div style={ed.wrap}>
+      <div style={ed.header}>
+        <span style={ed.headerTitle}>Editing: {CAPTURE_LABELS[capture.type]}</span>
+        <button onClick={onCancel} style={ed.closeBtn}>✕ Cancel</button>
+      </div>
+
+      {pendingRevision ? (
+        <>
+          <p style={ed.label}>REVISED TITLE</p>
+          <div style={ed.preview}>{pendingRevision.title}</div>
+          <p style={ed.label}>REVISED CONTENT</p>
+          <div style={ed.preview}>{pendingRevision.content}</div>
+          <div style={ed.row}>
+            <button onClick={acceptRevision} style={ed.saveBtn}>✓ Accept Revision</button>
+            <button onClick={rejectRevision} style={ed.cancelBtn}>← Back to Edit</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <label style={ed.label}>TITLE</label>
+          <input style={ed.input} value={title} onChange={e => setTitle(e.target.value)} />
+          <label style={ed.label}>CONTENT</label>
+          <textarea style={ed.textarea} value={content} onChange={e => setContent(e.target.value)} rows={6} />
+          <label style={ed.label}>REVISION INSTRUCTIONS (optional)</label>
+          <textarea
+            style={ed.textarea}
+            value={instructions}
+            onChange={e => setInstr(e.target.value)}
+            placeholder="e.g., 'make it more specific about materials' — leave blank to save manual edits only"
+            rows={2}
+          />
+          <div style={ed.row}>
+            <button onClick={handleSave} disabled={loading} style={ed.saveBtn}>
+              {loading ? "Revising…" : instructions.trim() ? "Apply Revision →" : "✓ Save Edits"}
+            </button>
+            <button onClick={onCancel} style={ed.cancelBtn}>Cancel</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TYPED DELETE MODAL
+// ─────────────────────────────────────────────────────────────────────────────
+function TypedDeleteModal({ capture, onConfirm, onCancel }) {
+  const [typed, setTyped] = useState("");
+  const ready = typed === "DELETE";
+
+  return (
+    <div style={dm.backdrop}>
+      <div style={dm.modal}>
+        <h3 style={dm.title}>Delete this capture?</h3>
+        <p style={dm.body}>
+          You're about to delete <strong>{capture.title}</strong>. This can't be undone.
+        </p>
+        <p style={dm.body}>Type <strong>DELETE</strong> below to confirm.</p>
+        <input
+          style={dm.input}
+          value={typed}
+          onChange={e => setTyped(e.target.value)}
+          placeholder="DELETE"
+          autoFocus
+        />
+        <div style={dm.row}>
+          <button onClick={() => onConfirm()} disabled={!ready} style={{ ...dm.deleteBtn, opacity: ready ? 1 : 0.3, cursor: ready ? "pointer" : "not-allowed" }}>
+            Delete Permanently
+          </button>
+          <button onClick={onCancel} style={dm.cancelBtn}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DRAFTING SECTION (unified chat replacing Description + Claims)
+// ─────────────────────────────────────────────────────────────────────────────
+function DraftingSection({ project, data, setData, handle }) {
+  const [messages, setMessages]           = useState(data.messages || []);
+  const [captures, setCaptures]           = useState(data.captures || []);
+  const [currentPhase, setCurrentPhase]   = useState(data.currentPhase || "describe");
+  const [pendingProposal, setPP]          = useState(null);
+  const [editingCapture, setEC]           = useState(null);
+  const [deletingCapture, setDC]          = useState(null);
+  const [loading, setLoading]             = useState(false);
+  const initialized                       = useRef(false);
+
+  // Bootstrap opener on first entry
+  useEffect(() => {
+    if (initialized.current) return;
+    if (messages.length > 0) { initialized.current = true; return; }
+    initialized.current = true;
+
+    const fromBrainstorm = !!data.fromBrainstorm;
+    const opener = fromBrainstorm
+      ? `Let's draft your provisional patent for **${data.patentTitle || "this invention"}**. Here's how this works: we'll build on the Brainstorm work you already did — I have your Invention Brief in front of me — and develop it into something detailed enough to file. As we talk, I'll capture pieces of the description and flag concepts that look potentially claimable. You'll see those building up in the sidebar to the right. When you're ready, we'll move to drafting the claims.\n\nTo start: looking back at your Brainstorm work, are there any refinements or new ideas that have come to mind since you wrote the brief? Or anything you want to sharpen before we go further?`
+      : `Let's draft your provisional patent for **${data.patentTitle || "this invention"}**. Here's how this works: we'll talk through your invention in your own words — I'll ask questions to make sure I understand it, and as we go I'll capture pieces of the description and flag concepts that look potentially claimable. You'll see those building up in the sidebar to the right. When you're ready, we'll move to drafting the claims.\n\nTo start: tell me about your invention. What does it do, and what problem does it solve?`;
+
+    const openerMsg = {
+      id: genId(),
+      role: "assistant",
+      content: opener,
+      createdAt: new Date().toISOString(),
+    };
+    setMessages([openerMsg]);
+  }, []);
+
+  // Persist on every change
+  useEffect(() => {
+    setData({ ...data, messages, captures, currentPhase });
+  }, [messages, captures, currentPhase]);
+
+  // beforeunload flush
+  useEffect(() => {
+    const flush = () => {
+      try {
+        supabase.from(TABLE).update({ data: { ...data, messages, captures, currentPhase }, updated_at: new Date().toISOString() }).eq("id", project.id);
+      } catch {}
+    };
+    window.addEventListener("beforeunload", flush);
+    return () => window.removeEventListener("beforeunload", flush);
+  }, [messages, captures, currentPhase]);
+
+  const sendMessage = async (text) => {
+    if (!text.trim() || loading) return;
+    const userMsg = { id: genId(), role: "user", content: text, createdAt: new Date().toISOString() };
+    const updated = [...messages, userMsg];
+    setMessages(updated);
+    setLoading(true);
+
+    try {
+      const system = buildDraftingSystemPrompt({
+        project,
+        captures,
+        currentPhase,
+        fromBrainstorm: !!data.fromBrainstorm,
+        brainstormBrief: data.brainstormBrief,
+      });
+
+      const apiMessages = updated.map(m => ({ role: m.role, content: m.content }));
+
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ system, messages: apiMessages, max_tokens: 2500 }),
+      });
+      const r = await res.json();
+      const raw = r.content?.map(i => i.type === "text" ? i.text : "").join("\n") || "I'm having trouble responding.";
+
+      const { proposals, claimables, cleanText } = parseMarkers(raw);
+
+      // Filter proposals to current phase rules (defensive guard)
+      const validProposals = proposals.filter(p => {
+        if (currentPhase === "describe") return p.type === "description_block";
+        if (currentPhase === "claim") return p.type === "claim";
+        return false;
+      });
+
+      const assistantMsg = {
+        id: genId(),
+        role: "assistant",
+        content: cleanText || "(no response)",
+        createdAt: new Date().toISOString(),
+      };
+      setMessages(m => [...m, assistantMsg]);
+
+      // Silent claimable captures
+      if (claimables.length > 0 && currentPhase === "describe") {
+        const newCaptures = claimables.map(c => ({
+          id: genId(),
+          type: "claimable_concept",
+          title: c.title,
+          content: c.content,
+          approved: true, // claimable concepts don't need approval
+          createdAt: new Date().toISOString(),
+          sourceMsgIdx: updated.length, // index of assistant message we'll append
+        }));
+        setCaptures(prev => [...prev, ...newCaptures]);
+      }
+
+      // Pending proposal (one at a time)
+      if (validProposals.length > 0) {
+        setPP(validProposals[0]);
+      }
+    } catch (err) {
+      const errorMsg = {
+        id: genId(),
+        role: "assistant",
+        content: "I'm having trouble responding right now — please try again in a moment.",
+        createdAt: new Date().toISOString(),
+      };
+      setMessages(m => [...m, errorMsg]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const approveProposal = () => {
+    if (!pendingProposal) return;
+    const newCapture = {
+      id: genId(),
+      type: pendingProposal.type,
+      title: pendingProposal.title,
+      content: pendingProposal.content,
+      approved: true,
+      createdAt: new Date().toISOString(),
+      sourceMsgIdx: messages.length - 1,
+    };
+    setCaptures(c => [...c, newCapture]);
+    setPP(null);
+  };
+
+  const rejectProposal = () => setPP(null);
+
+  const editProposal = () => {
+    if (!pendingProposal) return;
+    const newCapture = {
+      id: genId(),
+      type: pendingProposal.type,
+      title: pendingProposal.title,
+      content: pendingProposal.content,
+      approved: false,
+      createdAt: new Date().toISOString(),
+      sourceMsgIdx: messages.length - 1,
+    };
+    setCaptures(c => [...c, newCapture]);
+    setEC(newCapture);
+    setPP(null);
+  };
+
+  const handleEditCapture = (cap) => setEC(cap);
+
+  const handleSaveEdit = (updated) => {
+    setCaptures(prev => prev.map(c => c.id === updated.id ? { ...updated, approved: true } : c));
+    setEC(null);
+  };
+
+  const handleDeleteCapture = (cap) => setDC(cap);
+  const handleConfirmDelete = () => {
+    setCaptures(prev => prev.filter(c => c.id !== deletingCapture.id));
+    setDC(null);
+  };
+
+  const handlePhaseTransition = async () => {
+    if (currentPhase !== "describe") return;
+    setCurrentPhase("claim");
+    // Generate a transition opener
+    setLoading(true);
+    try {
+      const system = buildDraftingSystemPrompt({
+        project,
+        captures,
+        currentPhase: "claim",
+        fromBrainstorm: !!data.fromBrainstorm,
+        brainstormBrief: data.brainstormBrief,
+      });
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system,
+          messages: [{ role: "user", content: "We're moving to the claim phase. Acknowledge the transition briefly, then draft an initial set of claims based on the description blocks and claimable concepts captured. Use the [CAPTURE_PROPOSED] marker for each claim, one at a time, starting with Claim 1 (the broad independent claim)." }],
+          max_tokens: 2500,
+        }),
+      });
+      const r = await res.json();
+      const raw = r.content?.map(i => i.type === "text" ? i.text : "").join("\n") || "";
+      const { proposals, cleanText } = parseMarkers(raw);
+
+      const dividerMsg = {
+        id: genId(),
+        role: "divider",
+        content: "DESCRIBE PHASE COMPLETE. NOW DRAFTING CLAIMS.",
+        createdAt: new Date().toISOString(),
+      };
+      const assistantMsg = {
+        id: genId(),
+        role: "assistant",
+        content: cleanText || "Drafting claims now…",
+        createdAt: new Date().toISOString(),
+      };
+      setMessages(m => [...m, dividerMsg, assistantMsg]);
+
+      const validProposals = proposals.filter(p => p.type === "claim");
+      if (validProposals.length > 0) setPP(validProposals[0]);
+    } catch {} finally {
+      setLoading(false);
+    }
+  };
+
+  const updateNovelty = (u) => {
+    setData({ ...data, ...u });
+  };
+
+  // Build inline action cards for chat (pending proposal)
+  const inlineActions = pendingProposal ? {
+    [messages.length - 1]: (
+      <div style={ca.card}>
+        <div style={ca.header}>
+          <span style={ca.icon}>💡</span>
+          <span style={ca.title}>Proposed {CAPTURE_LABELS[pendingProposal.type]}</span>
+        </div>
+        <div style={ca.captureTitle}>{pendingProposal.title}</div>
+        <div style={ca.captureContent}>{pendingProposal.content}</div>
+        <div style={ca.row}>
+          <button onClick={approveProposal} style={ca.approveBtn}>✓ Capture</button>
+          <button onClick={editProposal} style={ca.editBtn}>✏ Edit First</button>
+          <button onClick={rejectProposal} style={ca.rejectBtn}>✕ Skip</button>
+        </div>
+      </div>
+    ),
+  } : {};
+
+  // Divider rendering
+  const renderedMessages = messages.map(m => {
+    if (m.role === "divider") {
+      return { ...m, _isDivider: true };
+    }
+    return m;
+  });
+
+  const dividerActions = {};
+  renderedMessages.forEach((m, i) => {
+    if (m._isDivider) {
+      dividerActions[i] = (
+        <div style={ca.divider}>
+          <span>{m.content}</span>
+        </div>
+      );
+    }
+  });
+
+  const combinedActions = { ...dividerActions, ...inlineActions };
+
+  const visibleMessages = renderedMessages.map(m => m._isDivider ? { ...m, content: "" } : m);
+
+  const hideChatInput = !!editingCapture || !!pendingProposal;
+
+  return (
+    <div style={pg.twoCol}>
+      <div style={pg.leftCol}>
+        <ChatThread
+          messages={visibleMessages.filter(m => !m._isDivider)}
+          loading={loading}
+          onSend={sendMessage}
+          placeholder={currentPhase === "describe" ? "Describe how your invention works…" : "React to the draft claims or ask for revisions…"}
+          inlineActions={combinedActions}
+          hideInput={hideChatInput}
+        />
+
+        {editingCapture && (
+          <CaptureEditPanel
+            capture={editingCapture}
+            onSave={handleSaveEdit}
+            onCancel={() => setEC(null)}
+          />
+        )}
+
+        <NoveltyAdvisor
+          captures={captures}
+          savedScore={data.noveltyScore}
+          savedAssessment={data.noveltyAssessment}
+          savedThread={data.noveltyThread}
+          onSave={updateNovelty}
+        />
+      </div>
+
+      <div style={pg.rightCol}>
+        <PatentForgeSidebar
+          captures={captures}
+          currentPhase={currentPhase}
+          onEditCapture={handleEditCapture}
+          onDeleteCapture={handleDeleteCapture}
+          onPhaseTransition={handlePhaseTransition}
+        />
+      </div>
+
+      {deletingCapture && (
+        <TypedDeleteModal
+          capture={deletingCapture}
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setDC(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BRAINSTORM IMPORT PICKER (unchanged from 1.5b)
 // ─────────────────────────────────────────────────────────────────────────────
 function BrainstormImportPicker({ onImport }) {
   const [open, setOpen]               = useState(false);
@@ -104,12 +934,10 @@ function BrainstormImportPicker({ onImport }) {
     if (briefs.length === 0) return;
     const latest = briefs[briefs.length - 1];
     const briefContent = latest?.content || "";
-
     const titleMatch = briefContent.match(/Title:\s*(.+)/);
     const fieldMatch = briefContent.match(/Field:\s*(.+)/);
     const title = titleMatch ? titleMatch[1].trim() : "";
     const field = fieldMatch ? fieldMatch[1].trim() : "";
-
     onImport({
       name: project.name || "Brainstorm Import",
       patentTitle: title,
@@ -124,7 +952,6 @@ function BrainstormImportPicker({ onImport }) {
       <button onClick={toggleOpen} style={imp.toggle}>
         {open ? "▼" : "▶"} Or import from a Brainstorm project
       </button>
-
       {open && (
         <div style={imp.panel}>
           <p style={imp.constraint}>
@@ -132,22 +959,18 @@ function BrainstormImportPicker({ onImport }) {
             To use an older version, open the project in Brainstorm first and re-synthesize from
             the captures you want — that version becomes the new latest.
           </p>
-
           {loading && <p style={imp.loadingMsg}>Loading your Brainstorm projects…</p>}
-
           {!loading && fetched && brainstormProjects.length === 0 && (
             <p style={imp.emptyMsg}>
               No Brainstorm projects yet. Start one in Brainstorm first, then come back here to import.
             </p>
           )}
-
           {!loading && brainstormProjects.length > 0 && (
             <div style={imp.list}>
               {brainstormProjects.map(p => {
                 const briefs = Array.isArray(p?.data?.briefs) ? p.data.briefs : [];
                 const hasBrief = briefs.length > 0;
                 const latest = hasBrief ? briefs[briefs.length - 1] : null;
-
                 return (
                   <div key={p.id} style={{ ...imp.row, ...(hasBrief ? {} : imp.rowDim) }}>
                     <div style={imp.rowMain}>
@@ -188,22 +1011,21 @@ function BrainstormImportPicker({ onImport }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PROJECT DASHBOARD (unchanged)
+// ─────────────────────────────────────────────────────────────────────────────
 function ProjectDashboard({ onNew, onResume, onSignOut, handle, isFirstTimeUser }) {
   const [projects, setProjects] = useState([]); const [newName, setNewName] = useState(""); const [loading, setLoading] = useState(true); const [handoff, setHandoff] = useState(null);
   useEffect(() => { fetchProjects(); try { const h = localStorage.getItem(HANDOFF_KEY); if (h) setHandoff(JSON.parse(h)); } catch {} }, []);
   const fetchProjects = async () => { setLoading(true); const { data } = await supabase.from(TABLE).select("*").order("updated_at", { ascending: false }); setProjects(data || []); setLoading(false); };
-  const handleHandoff = async () => { if (!handoff) return; const { data: { user } } = await supabase.auth.getUser(); const project = { id: genId(), user_id: user.id, name: handoff.name || "Brainstorm Import", section: 0, data: { patentTitle: handoff.patentTitle || "", patentField: handoff.patentField || handoff.field || "", summary: handoff.inventionBrief ? handoff.inventionBrief.substring(0, 400) : "", brainstormBrief: handoff.inventionBrief || "", noveltyAssessment: handoff.noveltyAssessment || null, fromBrainstorm: true } }; await supabase.from(TABLE).insert(project); try { localStorage.removeItem(HANDOFF_KEY); } catch {} setHandoff(null); onNew(project); };
+  const handleHandoff = async () => { if (!handoff) return; const { data: { user } } = await supabase.auth.getUser(); const project = { id: genId(), user_id: user.id, name: handoff.name || "Brainstorm Import", section: 0, data: { patentTitle: handoff.patentTitle || "", patentField: handoff.patentField || handoff.field || "", summary: handoff.inventionBrief ? handoff.inventionBrief.substring(0, 400) : "", brainstormBrief: handoff.inventionBrief || "", fromBrainstorm: true } }; await supabase.from(TABLE).insert(project); try { localStorage.removeItem(HANDOFF_KEY); } catch {} setHandoff(null); onNew(project); };
   const handleNew = async () => { const name = newName.trim() || `Patent Application — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`; const { data: { user } } = await supabase.auth.getUser(); const project = { id: genId(), user_id: user.id, name, section: 0, data: {} }; await supabase.from(TABLE).insert(project); setNewName(""); onNew(project); };
   const handleImportFromBrainstorm = async (imported) => {
     const { data: { user } } = await supabase.auth.getUser();
     const project = {
-      id: genId(),
-      user_id: user.id,
-      name: imported.name,
-      section: 0,
+      id: genId(), user_id: user.id, name: imported.name, section: 0,
       data: {
-        patentTitle: imported.patentTitle || "",
-        patentField: imported.patentField || "",
+        patentTitle: imported.patentTitle || "", patentField: imported.patentField || "",
         summary: imported.brainstormBrief ? imported.brainstormBrief.substring(0, 400) : "",
         brainstormBrief: imported.brainstormBrief || "",
         importedBriefVersion: imported.briefVersionLabel || "",
@@ -215,12 +1037,11 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle, isFirstTimeUser 
   };
   const handleDelete = async (id, name) => { if (!confirm(`Delete "${name}"?`)) return; await supabase.from(TABLE).delete().eq("id", id); setProjects(p => p.filter(x => x.id !== id)); };
   const handleRename = async (id) => { const p = projects.find(p => p.id === id); const n = prompt("Rename:", p.name); if (!n?.trim()) return; await supabase.from(TABLE).update({ name: n.trim(), updated_at: new Date().toISOString() }).eq("id", id); setProjects(prev => prev.map(x => x.id === id ? { ...x, name: n.trim() } : x)); };
-  const sl = (i) => i >= SECTIONS.length - 1 ? "Complete ★" : SECTIONS[i]?.label || "?";
+  const sl = (i) => SECTIONS[i]?.label || "?";
   return (
     <div style={ps.content}>
       <div style={db.topRow}><h2 style={ps.title}>Your Patent Applications</h2><div style={db.userRow}><span style={db.userHandle}>{handle}</span><button onClick={onSignOut} style={db.signOutBtn}>Sign Out</button></div></div>
       <p style={ps.desc}>Each application saves automatically — resume from any device, any time.</p>
-
       {isFirstTimeUser && !handoff && (
         <div style={wb.banner}>
           <div style={wb.icon}>👋</div>
@@ -230,13 +1051,9 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle, isFirstTimeUser 
           </div>
         </div>
       )}
-
       {handoff && (<div style={hf.banner}><div style={hf.bannerLeft}><div style={hf.bannerTitle}>🔗 Brainstorm session ready to continue</div><div style={hf.bannerMeta}>"{handoff.name}" — title, field, and brief pre-filled.</div></div><div style={hf.bannerRight}><button onClick={handleHandoff} style={hf.continueBtn}>Continue in Patent Forge →</button><button onClick={() => { try { localStorage.removeItem(HANDOFF_KEY); } catch {} setHandoff(null); }} style={hf.dismissBtn}>Dismiss</button></div></div>)}
-
       <div style={db.newRow}><input style={{ ...ps.input, flex: 1, marginTop: 0 }} value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleNew()} placeholder="Name your invention (optional)..." /><button onClick={handleNew} style={ps.nextBtn}>Start New Application →</button></div>
-
       <BrainstormImportPicker onImport={handleImportFromBrainstorm} />
-
       {loading && <p style={{ color: theme.textMuted, fontSize: 14 }}>Loading your applications…</p>}
       {!loading && projects.length > 0 && (<div style={db.list}><p style={db.listHeader}>SAVED APPLICATIONS ({projects.length})</p>{projects.map(p => (<div key={p.id} style={db.card}><div style={db.cardLeft}><div style={db.cardName}>{p.name}{p.data?.fromBrainstorm && <span style={hf.tag}>from Brainstorm</span>}{p.data?.importedBriefVersion && <span style={imp.briefTag}>{p.data.importedBriefVersion}</span>}</div><div style={db.cardMeta}>Last saved {new Date(p.updated_at).toLocaleString()} &nbsp;·&nbsp; Stage: <span style={{ color: theme.red }}>{sl(p.section)}</span></div></div><div style={db.cardRight}><button onClick={() => onResume(p)} style={db.resumeBtn}>Resume →</button><button onClick={() => handleRename(p.id)} style={db.iconBtn} title="Rename">✏</button><button onClick={() => handleDelete(p.id, p.name)} style={db.iconBtn} title="Delete">✕</button></div></div>))}</div>)}
       {!loading && projects.length === 0 && !handoff && <div style={db.empty}>No saved applications yet. Start your first one above.</div>}
@@ -244,6 +1061,9 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle, isFirstTimeUser 
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// STATIC SECTIONS (unchanged)
+// ─────────────────────────────────────────────────────────────────────────────
 function StickyActionBar({ children, justSaved }) {
   return (
     <div style={ps.stickyBar}>
@@ -261,18 +1081,15 @@ function InventorSection({ data, setData, onNext, profileName, profileCity, prof
   const [email, setEmail]     = useState(data.email || profileEmail || "");
   const canProceed = name.trim() && city.trim() && stateVal.trim();
   const greetingLine = profileName && !data.inventorName ? `Drafting on behalf of ${profileName}? Fill in the details below — we've pre-filled what we can.` : null;
-
   return (
     <div style={ps.content}>
       <h2 style={ps.title}>Inventor Information</h2>
       <p style={ps.desc}>This is who will be named on the provisional patent application.</p>
       {greetingLine && <div style={hf.infoBar}>{greetingLine}</div>}
       {data.fromBrainstorm && <div style={hf.infoBar}>💡 Your Brainstorm session has been pre-loaded — title, field, and brief are ready in the next steps.</div>}
-
       <label style={ps.label}>Full Legal Name</label>
       <input style={ps.input} value={name} onChange={e => setName(e.target.value)} placeholder="e.g., Jane M. Smith — or your handle" />
       <p style={ps.helper}>Your handle works here too. The USPTO will need your legal name at filing, but you can keep it private in Patent Forge and add it to the filing documents you download later.</p>
-
       <label style={ps.label}>City</label><input style={ps.input} value={city} onChange={e => setCity(e.target.value)} placeholder="e.g., Decatur" />
       <label style={ps.label}>State / Province</label><input style={ps.input} value={stateVal} onChange={e => setStateVal(e.target.value)} placeholder="e.g., Georgia" />
       <label style={ps.label}>Country</label><input style={ps.input} value={country} onChange={e => setCountry(e.target.value)} />
@@ -286,7 +1103,6 @@ function InventorSection({ data, setData, onNext, profileName, profileCity, prof
 
 function AgreementSection({ data, setData, onNext, hasAgreedBefore, justSaved }) {
   const [agreed, setAgreed] = useState(data.agreed || hasAgreedBefore || false);
-
   if (hasAgreedBefore && !data.fromBrainstorm) {
     return (
       <div style={ps.content}>
@@ -306,7 +1122,6 @@ function AgreementSection({ data, setData, onNext, hasAgreedBefore, justSaved })
       </div>
     );
   }
-
   return (
     <div style={ps.content}>
       <h2 style={ps.title}>Our Shared Vision</h2>
@@ -345,88 +1160,15 @@ function TitleSection({ data, setData, onNext, justSaved }) {
       <label style={ps.label}>Technical Field</label><input style={ps.input} value={field} onChange={e => setField(e.target.value)} placeholder="e.g., Manufacturing Equipment, Medical Devices..." />
       <label style={ps.label}>Brief Summary (2-3 sentences)</label><textarea style={ps.textarea} value={summary} onChange={e => setSummary(e.target.value)} placeholder="What does your invention do? What problem does it solve? What makes it different?" rows={4} />
       <StickyActionBar justSaved={justSaved}>
-        <button onClick={() => { setData({ ...data, patentTitle: title, patentField: field, summary }); onNext(); }} disabled={!canProceed} style={{ ...ps.nextBtn, opacity: canProceed ? 1 : 0.4, cursor: canProceed ? "pointer" : "not-allowed", marginTop: 0 }}>Next: Detailed Description →</button>
+        <button onClick={() => { setData({ ...data, patentTitle: title, patentField: field, summary }); onNext(); }} disabled={!canProceed} style={{ ...ps.nextBtn, opacity: canProceed ? 1 : 0.4, cursor: canProceed ? "pointer" : "not-allowed", marginTop: 0 }}>Next: Drafting →</button>
       </StickyActionBar>
     </div>
   );
 }
 
-function DescriptionSection({ data, setData, onNext, justSaved }) {
-  const bsCtx = data.brainstormBrief ? `\nInvention Brief from Brainstorm:\n${data.brainstormBrief.substring(0, 1000)}` : "";
-  const chat = useChat(`You are a patent drafting assistant at HAIIC helping write the Detailed Description.\nInvention: ${data.patentTitle}\nField: ${data.patentField}\nSummary: ${data.summary}\nInventor: ${data.inventorName}${bsCtx}\nAsk about key components, materials, dimensions, alternative embodiments. Push for detail that lets someone reproduce it.`);
-  const initialized = useRef(false);
-  useEffect(() => { if (!initialized.current && chat.messages.length === 0) { initialized.current = true; chat.send(`[SYSTEM: Acknowledge "${data.patentTitle}" and ask the inventor to walk through how it works.]`); } }, []);
-  const proceed = () => { setData({ ...data, descriptionDiscussion: chat.messages.map(m => `${m.role}: ${m.content}`).join("\n") }); onNext(); };
-  const ctx = `Title: ${data.patentTitle || "—"}\nField: ${data.patentField || "—"}\nSummary: ${data.summary || "—"}\nDescription: ${(data.descriptionDiscussion || "").substring(0, 1000)}`;
-  return (
-    <div style={ps.content}>
-      <h2 style={ps.title}>Detailed Description</h2>
-      <p style={ps.desc}>This is the heart of your patent. The AI will help you describe your invention in enough detail that someone in your field could reproduce it.</p>
-      <ChatThread messages={chat.messages.filter((m, i) => !(i === 0 && m.role === "user" && m.content.startsWith("[SYSTEM:")))} loading={chat.loading} onSend={msg => chat.send(msg)} placeholder="Describe how your invention works..." />
-      {chat.messages.length > 5 && (
-        <>
-          <StickyActionBar justSaved={justSaved}>
-            <button onClick={proceed} style={{ ...ps.nextBtn, marginTop: 0 }}>Next: Draft Claims →</button>
-          </StickyActionBar>
-          <NoveltyAdvisor data={data} context={ctx} onSave={(u) => setData({ ...data, ...u })} />
-        </>
-      )}
-    </div>
-  );
-}
-
-function ClaimsSection({ data, setData, onNext, justSaved }) {
-  const chat = useChat(`You are a patent claims drafting assistant at HAIIC.\nInvention: ${data.patentTitle}\nField: ${data.patentField}\nDescription: ${(data.descriptionDiscussion || "").substring(0, 2000)}\nHelp draft claims. Start broad, then 2-3 dependent claims. Use patent language and plain English side by side.`);
-  const initialized = useRef(false);
-  useEffect(() => { if (!initialized.current && chat.messages.length === 0) { initialized.current = true; chat.send(`[SYSTEM: Explain what patent claims are, then draft a broad independent claim for "${data.patentTitle}". Present in patent language and plain English.]`); } }, []);
-  const proceed = () => { setData({ ...data, claimsDiscussion: chat.messages.map(m => `${m.role}: ${m.content}`).join("\n") }); onNext(); };
-  const ctx = `Title: ${data.patentTitle || "—"}\nField: ${data.patentField || "—"}\nDescription: ${(data.descriptionDiscussion || "").substring(0, 600)}\nClaims: ${(data.claimsDiscussion || "").substring(0, 600)}`;
-  return (
-    <div style={ps.content}>
-      <h2 style={ps.title}>Draft Patent Claims</h2>
-      <p style={ps.desc}>Claims define exactly what your patent protects. The AI will help you draft them in proper legal language while explaining everything in plain English.</p>
-      <ChatThread messages={chat.messages.filter((m, i) => !(i === 0 && m.role === "user" && m.content.startsWith("[SYSTEM:")))} loading={chat.loading} onSend={msg => chat.send(msg)} placeholder="Review the claims and let me know what to adjust..." />
-      {chat.messages.length > 4 && (
-        <>
-          <StickyActionBar justSaved={justSaved}>
-            <button onClick={proceed} style={{ ...ps.nextBtn, marginTop: 0 }}>Generate Filing Package →</button>
-          </StickyActionBar>
-          <NoveltyAdvisor data={data} context={ctx} onSave={(u) => setData({ ...data, ...u })} />
-        </>
-      )}
-    </div>
-  );
-}
-
-function ReviewSection({ data, setData, justSaved }) {
-  const [document, setDocument] = useState(data.filingDocument || ""); const [loading, setLoading] = useState(!data.filingDocument); const [copied, setCopied] = useState(false);
-  useEffect(() => { if (!data.filingDocument) generateDocument(); }, []);
-  const generateDocument = async () => {
-    setLoading(true);
-    try {
-      const bsCtx = data.brainstormBrief ? `\nBrainstorm Brief:\n${data.brainstormBrief.substring(0, 800)}` : "";
-      const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ system: `Generate a complete provisional patent application for the USPTO:\n1. HEADER\n2. HAIIC BENEFIT-SHARING ACKNOWLEDGMENT\n3. TITLE OF THE INVENTION\n4. FIELD OF THE INVENTION\n5. BACKGROUND\n6. SUMMARY\n7. DETAILED DESCRIPTION\n8. CLAIMS\n9. ABSTRACT (150 words)\nWrite in formal patent language.`, messages: [{ role: "user", content: `Generate:\nInventor: ${data.inventorName}\nLocation: ${data.city}, ${data.state}, ${data.country}\nTitle: ${data.patentTitle}\nField: ${data.patentField}\nSummary: ${data.summary}${bsCtx}\nDescription: ${(data.descriptionDiscussion || "").substring(0, 2500)}\nClaims: ${(data.claimsDiscussion || "").substring(0, 2500)}` }], max_tokens: 4000 }) });
-      const result = await res.json(); const text = result.content?.map(i => i.type === "text" ? i.text : "").join("\n") || "Unable to generate.";
-      setDocument(text); setData(prev => ({ ...prev, filingDocument: text }));
-    } catch { setDocument("Unable to generate document. Please try again."); } finally { setLoading(false); }
-  };
-  return (
-    <div style={ps.content}>
-      <h2 style={ps.title}>Your Filing Package</h2>
-      <p style={ps.desc}>Here's your complete provisional patent application. Review carefully, then export or copy for filing with the USPTO.</p>
-      {loading ? (<div style={{ textAlign: "center", padding: 40, color: theme.textMuted }}><p>Generating your provisional patent application…</p><p style={{ fontSize: 13, marginTop: 8 }}>This may take a moment.</p></div>) : (
-        <>
-          <div style={ps.docCard}><pre style={ps.docText}>{document}</pre></div>
-          <StickyActionBar justSaved={justSaved}>
-            <button onClick={() => { navigator.clipboard.writeText(document); setCopied(true); setTimeout(() => setCopied(false), 2000); }} style={{ ...ps.copyBtn, marginTop: 0 }}>{copied ? "✓ Copied!" : "Copy to Clipboard"}</button>
-          </StickyActionBar>
-          <div style={ps.nextSteps}><h3 style={ps.nextStepsTitle}>Next Steps</h3><p style={ps.nextStepsText}>1. Review the document carefully for accuracy.</p><p style={ps.nextStepsText}>2. File at the USPTO via EFS-Web (www.uspto.gov). Micro entity fee is approximately $80.</p><p style={ps.nextStepsText}>3. Your provisional patent gives you 12 months of "patent pending" status.</p><p style={ps.nextStepsText}>4. HAIIC will assist with commercialization under the benefit-sharing framework.</p></div>
-        </>
-      )}
-    </div>
-  );
-}
-
+// ─────────────────────────────────────────────────────────────────────────────
+// PAGE
+// ─────────────────────────────────────────────────────────────────────────────
 export default function PatentForgePage() {
   const router = useRouter();
   const [user, setUser] = useState(null);
@@ -455,14 +1197,12 @@ export default function PatentForgePage() {
       setProfileState(profile?.profile_categories?.state || "");
       setProfileCountry(profile?.profile_categories?.country || "");
       setProfileEmail(profile?.profile_categories?.email || "");
-
       const { data: priorProjects } = await supabase.from(TABLE).select("id, data").eq("user_id", userId);
       const noPriorProjects = !priorProjects || priorProjects.length === 0;
       setIsFirstTimeUser(noPriorProjects);
       const everAgreed = Array.isArray(priorProjects) && priorProjects.some(p => p?.data?.agreed === true);
       setHasAgreedBefore(everAgreed);
     };
-
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) { router.push("/login?next=/patent-forge"); return; }
       setUser(session.user);
@@ -498,7 +1238,6 @@ export default function PatentForgePage() {
     setJustSaved(true);
     setTimeout(() => setJustSaved(false), 1200);
   };
-  const handleExport = () => { if (project) exportToDocx({ ...project, section, data }); };
   const handleSignOut = async () => { await supabase.auth.signOut(); router.push("/login"); };
 
   if (authLoading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", color: "#888", fontFamily: "'DM Sans', sans-serif", fontSize: 16 }}>Loading…</div>;
@@ -520,7 +1259,6 @@ export default function PatentForgePage() {
         <div style={tb.projectName}>{project?.name || "Untitled"}</div>
         <div style={tb.actions}>
           <button onClick={handleSave} style={tb.btn}>{justSaved ? "✓ Saved" : "💾 Save"}</button>
-          <button onClick={handleExport} style={tb.btn}>⬇ Export .docx</button>
           <span style={tb.userHandle}>{handle}</span>
           <button onClick={handleSignOut} style={tb.signOutBtn}>Sign Out</button>
         </div>
@@ -541,19 +1279,79 @@ export default function PatentForgePage() {
       {section === 0 && <InventorSection    data={data} setData={handleSetData} onNext={goNext} profileName={profileName} profileCity={profileCity} profileState={profileState} profileCountry={profileCountry} profileEmail={profileEmail} justSaved={justSaved} />}
       {section === 1 && <AgreementSection   data={data} setData={handleSetData} onNext={goNext} hasAgreedBefore={hasAgreedBefore} justSaved={justSaved} />}
       {section === 2 && <TitleSection       data={data} setData={handleSetData} onNext={goNext} justSaved={justSaved} />}
-      {section === 3 && <DescriptionSection data={data} setData={handleSetData} onNext={goNext} justSaved={justSaved} />}
-      {section === 4 && <ClaimsSection      data={data} setData={handleSetData} onNext={goNext} justSaved={justSaved} />}
-      {section === 5 && <ReviewSection      data={data} setData={handleSetData} justSaved={justSaved} />}
+      {section === 3 && <DraftingSection    project={project} data={data} setData={handleSetData} handle={handle} />}
     </Layout>
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// STYLES
+// ─────────────────────────────────────────────────────────────────────────────
 const styles = {
   header: { marginBottom: 24 },
   label: { color: theme.red, fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", marginBottom: 8 },
   heading: { fontFamily: "'Playfair Display', serif", fontSize: 32, fontWeight: 700, color: theme.text },
   sections: { display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 32, paddingBottom: 20, borderBottom: `1px solid ${theme.border}` },
   sectionChip: { border: "1px solid", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap", transition: "all 0.15s ease" },
+};
+const pg = {
+  twoCol: { display: "flex", gap: 20, height: "calc(100vh - 240px)", minHeight: 500 },
+  leftCol: { flex: 1, minWidth: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 16, paddingRight: 4 },
+  rightCol: { width: 320, flexShrink: 0, overflowY: "auto", paddingLeft: 4 },
+};
+const sb = {
+  wrap: { display: "flex", flexDirection: "column", gap: 20 },
+  section: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 10, padding: 14 },
+  sectionLabel: { fontSize: 10, fontWeight: 700, letterSpacing: 2, color: theme.textDim, marginBottom: 10, marginTop: 0 },
+  count: { color: theme.red, marginLeft: 4 },
+  phaseList: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 },
+  phaseItem: { fontSize: 13, fontFamily: "'DM Sans', sans-serif" },
+  advanceBtn: { width: "100%", background: theme.red, border: "none", borderRadius: 6, color: "#fff", padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", marginTop: 8 },
+  emptyHint: { fontSize: 11, color: theme.textDim, fontStyle: "italic", margin: 0, lineHeight: 1.5 },
+  list: { display: "flex", flexDirection: "column", gap: 8 },
+  card: { background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 7, padding: 10 },
+  cardHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6, marginBottom: 4 },
+  cardTitle: { fontSize: 12, fontWeight: 700, color: theme.text, flex: 1, lineHeight: 1.4 },
+  cardActions: { display: "flex", gap: 2 },
+  iconBtn: { background: "transparent", border: "none", color: theme.textDim, padding: "2px 5px", fontSize: 11, cursor: "pointer", borderRadius: 3 },
+  cardContent: { fontSize: 11, color: theme.textMuted, lineHeight: 1.5 },
+  pendingTag: { display: "inline-block", background: theme.red, color: "#fff", fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 3, marginTop: 6, letterSpacing: 1 },
+};
+const ca = {
+  card: { background: theme.surface, border: `1px solid ${theme.red}`, borderRadius: 10, padding: 14, marginTop: 8, marginBottom: 8 },
+  header: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 },
+  icon: { fontSize: 16 },
+  title: { fontSize: 11, fontWeight: 700, letterSpacing: 2, color: theme.red, textTransform: "uppercase" },
+  captureTitle: { fontSize: 14, fontWeight: 700, color: theme.text, marginBottom: 6 },
+  captureContent: { fontSize: 13, color: theme.textMuted, lineHeight: 1.6, marginBottom: 10, whiteSpace: "pre-wrap" },
+  row: { display: "flex", gap: 6, flexWrap: "wrap" },
+  approveBtn: { background: theme.red, border: "none", borderRadius: 6, color: "#fff", padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  editBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "7px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  rejectBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textDim, padding: "7px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  divider: { textAlign: "center", padding: "12px 16px", margin: "16px 0", background: theme.surfaceAlt, border: `1px dashed ${theme.red}`, borderRadius: 6, fontSize: 11, fontWeight: 700, letterSpacing: 2, color: theme.red, textTransform: "uppercase" },
+};
+const ed = {
+  wrap: { background: "#1a1a1a", border: `2px solid ${theme.red}`, borderRadius: 10, padding: 18, marginTop: 12, boxShadow: "0 8px 24px rgba(0,0,0,0.4)" },
+  header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, paddingBottom: 10, borderBottom: `1px solid ${theme.border}` },
+  headerTitle: { fontSize: 13, fontWeight: 700, color: theme.text, letterSpacing: 1 },
+  closeBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "5px 12px", fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  label: { display: "block", fontSize: 10, fontWeight: 700, letterSpacing: 2, color: theme.textDim, marginTop: 12, marginBottom: 6 },
+  input: { width: "100%", background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, padding: "8px 12px", fontSize: 13, fontFamily: "'DM Sans', sans-serif", boxSizing: "border-box", outline: "none" },
+  textarea: { width: "100%", background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, padding: "8px 12px", fontSize: 13, fontFamily: "'DM Sans', sans-serif", boxSizing: "border-box", resize: "vertical", outline: "none" },
+  preview: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 6, padding: "10px 12px", fontSize: 13, color: theme.text, lineHeight: 1.5, whiteSpace: "pre-wrap" },
+  row: { display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" },
+  saveBtn: { background: theme.red, border: "none", borderRadius: 6, color: "#fff", padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  cancelBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "8px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+};
+const dm = {
+  backdrop: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 },
+  modal: { background: "#1a1a1a", border: `1px solid ${theme.red}`, borderRadius: 10, padding: 24, maxWidth: 440, width: "90%", boxShadow: "0 16px 48px rgba(0,0,0,0.5)" },
+  title: { fontFamily: "'Playfair Display', serif", fontSize: 20, fontWeight: 700, color: theme.text, marginTop: 0, marginBottom: 12 },
+  body: { fontSize: 13, color: theme.textMuted, lineHeight: 1.6, marginBottom: 10 },
+  input: { width: "100%", background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, padding: "10px 14px", fontSize: 14, fontFamily: "'DM Sans', sans-serif", boxSizing: "border-box", outline: "none", marginTop: 4 },
+  row: { display: "flex", gap: 10, marginTop: 16 },
+  deleteBtn: { background: theme.red, border: "none", borderRadius: 6, color: "#fff", padding: "8px 16px", fontSize: 13, fontWeight: 700, fontFamily: "'DM Sans', sans-serif" },
+  cancelBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
 };
 const ps = {
   content:  { marginTop: 8 },
@@ -565,7 +1363,6 @@ const ps = {
   input:    { width: "100%", background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.text, padding: "10px 14px", fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box" },
   textarea: { width: "100%", background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.text, padding: "10px 14px", fontSize: 14, fontFamily: "'DM Sans', sans-serif", resize: "vertical", outline: "none", boxSizing: "border-box" },
   nextBtn:  { background: theme.red, border: "none", borderRadius: 8, color: "#fff", padding: "12px 24px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", marginTop: 16, whiteSpace: "nowrap" },
-  copyBtn:  { padding: "12px 20px", background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.textMuted, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   agreementCard: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 28, marginBottom: 24 },
   agreementTitle: { fontFamily: "'Playfair Display', serif", fontSize: 18, fontWeight: 700, color: theme.text, marginBottom: 12 },
   agreementText: { fontSize: 14, lineHeight: 1.7, color: theme.textMuted, marginBottom: 16 },
@@ -577,15 +1374,21 @@ const ps = {
   splitDesc:  { fontSize: 12, color: theme.textMuted, lineHeight: 1.5 },
   checkboxLabel: { display: "flex", gap: 12, alignItems: "flex-start", fontSize: 14, lineHeight: 1.6, color: theme.text, cursor: "pointer", marginBottom: 8 },
   checkbox: { marginTop: 4, accentColor: theme.red },
-  docCard: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 24, marginBottom: 20, maxHeight: 500, overflowY: "auto" },
-  docText: { fontSize: 13, lineHeight: 1.7, color: "#ccc", fontFamily: "'DM Sans', monospace", whiteSpace: "pre-wrap", wordBreak: "break-word" },
-  docActions: { display: "flex", gap: 12, marginBottom: 24 },
-  nextSteps: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 24, marginTop: 16 },
-  nextStepsTitle: { fontFamily: "'Playfair Display', serif", fontSize: 18, fontWeight: 700, color: theme.text, marginBottom: 12 },
-  nextStepsText: { fontSize: 14, lineHeight: 1.7, color: theme.textMuted, marginBottom: 8 },
   stickyBar: { position: "sticky", bottom: 0, background: "#1a1a1a", borderTop: `1px solid ${theme.border}`, marginTop: 24, padding: "14px 0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, zIndex: 5 },
   stickyBarRight: { display: "flex", gap: 8, alignItems: "center", marginLeft: "auto" },
   savedInline: { fontSize: 12, fontWeight: 700, color: "#80ff99", letterSpacing: 1 },
+};
+const wb = {
+  banner: { background: theme.surface, border: `1px solid ${theme.red}`, borderRadius: 10, padding: "16px 20px", marginBottom: 24, display: "flex", gap: 14, alignItems: "flex-start" },
+  icon: { fontSize: 24, lineHeight: 1, flexShrink: 0, marginTop: 2 },
+  body: { flex: 1 },
+  title: { fontSize: 16, fontWeight: 700, color: theme.text, marginBottom: 6 },
+  text: { fontSize: 13, color: theme.textMuted, lineHeight: 1.6, margin: 0 },
+};
+const ag = {
+  collapsed: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "12px 16px", marginBottom: 16 },
+  collapsedSummary: { fontSize: 13, color: theme.red, fontWeight: 600, cursor: "pointer", listStyle: "revert" },
+  collapsedBody: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${theme.border}` },
 };
 const imp = {
   wrap: { marginTop: -8, marginBottom: 24 },
@@ -607,18 +1410,6 @@ const imp = {
   useBtnDisabled: { color: theme.textDim, fontSize: 18, padding: "7px 14px", fontWeight: 700 },
   rowInstruction: { fontSize: 12, color: theme.textMuted, lineHeight: 1.6, marginTop: 8, marginBottom: 0, paddingTop: 8, borderTop: `1px dashed ${theme.border}`, fontStyle: "italic" },
   briefTag: { background: theme.surfaceAlt, color: theme.textMuted, fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4, marginLeft: 6, verticalAlign: "middle", border: `1px solid ${theme.border}` },
-};
-const wb = {
-  banner: { background: theme.surface, border: `1px solid ${theme.red}`, borderRadius: 10, padding: "16px 20px", marginBottom: 24, display: "flex", gap: 14, alignItems: "flex-start" },
-  icon: { fontSize: 24, lineHeight: 1, flexShrink: 0, marginTop: 2 },
-  body: { flex: 1 },
-  title: { fontSize: 16, fontWeight: 700, color: theme.text, marginBottom: 6 },
-  text: { fontSize: 13, color: theme.textMuted, lineHeight: 1.6, margin: 0 },
-};
-const ag = {
-  collapsed: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "12px 16px", marginBottom: 16 },
-  collapsedSummary: { fontSize: 13, color: theme.red, fontWeight: 600, cursor: "pointer", listStyle: "revert" },
-  collapsedBody: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${theme.border}` },
 };
 const db = {
   topRow:     { display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 4 },
@@ -658,13 +1449,12 @@ const hf = {
   tag: { background: theme.red, color: "#fff", borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700, marginLeft: 8, verticalAlign: "middle" },
 };
 const na = {
-  wrap:        { marginTop: 24, borderTop: `1px solid ${theme.border}`, paddingTop: 16 },
-  toggle:      { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.textMuted, padding: "10px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", display: "flex", alignItems: "center", gap: 8 },
-  badge:       { background: theme.red, color: "#fff", borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700 },
-  panel:       { marginTop: 12, background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 10, padding: 20 },
-  intro:       { fontSize: 13, color: theme.textMuted, lineHeight: 1.6, marginBottom: 16 },
-  runBtn:      { background: theme.red, border: "none", borderRadius: 7, color: "#fff", padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
-  loadingMsg:  { color: theme.textMuted, fontSize: 13, fontStyle: "italic" },
+  wrap:        { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 10, overflow: "hidden" },
+  toggle:      { width: "100%", background: "transparent", border: "none", color: theme.textMuted, padding: "12px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", display: "flex", alignItems: "center", gap: 12 },
+  scoreInline: { fontWeight: 700, fontSize: 14, letterSpacing: 0.5 },
+  panel:       { padding: 18, borderTop: `1px solid ${theme.border}` },
+  intro:       { fontSize: 13, color: theme.textMuted, lineHeight: 1.6, marginBottom: 16, marginTop: 0 },
+  loadingMsg:  { color: theme.textMuted, fontSize: 13, fontStyle: "italic", margin: 0 },
   result:      { background: theme.surfaceAlt, borderRadius: 8, padding: 16, marginBottom: 16 },
   resultText:  { fontSize: 13, lineHeight: 1.7, color: theme.text, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'DM Sans', sans-serif", margin: 0 },
   threadWrap:  { marginBottom: 12 },
@@ -674,5 +1464,4 @@ const na = {
   followRow:   { display: "flex", gap: 8, marginBottom: 8 },
   followInput: { flex: 1, background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 7, color: theme.text, padding: "8px 12px", fontSize: 13, fontFamily: "'DM Sans', sans-serif", outline: "none" },
   askBtn:      { background: theme.red, border: "none", borderRadius: 7, color: "#fff", padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
-  rerunBtn:    { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textDim, padding: "6px 12px", fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
 };
