@@ -1214,6 +1214,10 @@ function DraftingSection({ project, data, setData, handle, userId }) {
         })),
       };
       setMessages([openerMsg]);
+      setTimeout(() => {
+        const scrollContainer = document.querySelector('[data-chat-scroll]');
+        if (scrollContainer) scrollContainer.scrollTo({ top: 0, behavior: "smooth" });
+      }, 300);
     } catch (err) {
       console.error("Import acknowledgment bootstrap failed:", err);
       const fallbackMsg = {
