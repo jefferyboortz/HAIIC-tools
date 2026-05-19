@@ -1301,7 +1301,7 @@ function DraftingSection({ project, data, setData, handle, userId }) {
 
       const apiMessages = await Promise.all(updated.map(async m => {
         const base = { role: m.role, content: m.content };
-        if (Array.isArray(m.attachments) && m.attachments.length > 0) {
+        if (m.role === "user" && Array.isArray(m.attachments) && m.attachments.length > 0) {
           const apiAttachments = [];
           for (const att of m.attachments) {
             if (att.type === "image" && att.storagePath) {
