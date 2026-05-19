@@ -8,6 +8,7 @@ import theme from "../components/theme";
 
 const TABLE = "brainstorm_projects";
 const HANDOFF_KEY = "haiic_pf_handoff";
+const UPLOAD_BUCKET = "inventor-uploads";
 
 const PHASES = ["intake", "problem", "explore", "ideate", "refine", "brief"];
 
@@ -35,7 +36,51 @@ function briefDisplayName(brief) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SYSTEM PROMPT (phase-aware)
+// IMAGE UPLOAD HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+async function uploadImageToBucket(file, userId, projectId) {
+  const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const imageId = genId();
+  const storagePath = `${userId}/${projectId}/${imageId}.${ext}`;
+
+  const { error } = await supabase.storage
+    .from(UPLOAD_BUCKET)
+    .upload(storagePath, file, {
+      cacheControl: "3600",
+      upsert: false,
+      contentType: file.type,
+    });
+
+  if (error) {
+    console.error("Storage upload error:", error);
+    throw error;
+  }
+
+  const { data, error: signError } = await supabase.storage
+    .from(UPLOAD_BUCKET)
+    .createSignedUrl(storagePath, 60 * 60);
+
+  if (signError) {
+    console.error("Sign URL error:", signError);
+    throw signError;
+  }
+
+  return { storagePath, displayUrl: data.signedUrl };
+}
+
+async function freshSignedUrl(storagePath, expirySeconds = 60 * 60) {
+  const { data, error } = await supabase.storage
+    .from(UPLOAD_BUCKET)
+    .createSignedUrl(storagePath, expirySeconds);
+  if (error || !data?.signedUrl) {
+    console.error("Failed to generate signed URL:", storagePath, error);
+    return null;
+  }
+  return data.signedUrl;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SYSTEM PROMPT (phase-aware, with image awareness)
 // ─────────────────────────────────────────────────────────────────────────────
 function buildSystemPrompt({ handle, profileSummary, intent, currentPhase, captures, briefs }) {
   const intentLine =
@@ -101,6 +146,20 @@ You can still emit insight captures if something durable comes up. Do not propos
     !briefs || briefs.length === 0
       ? "No brief synthesized yet."
       : `${briefs.length} brief version${briefs.length === 1 ? "" : "s"} synthesized. Latest: ${briefDisplayName(briefs[briefs.length - 1])}.`;
+
+  const imageGuide = `══════════════════════════════════════════════════════════════
+HANDLING IMAGE ATTACHMENTS
+══════════════════════════════════════════════════════════════
+
+The inventor may attach images — sketches, photos, diagrams, mood boards, screenshots. Many inventors think visually. When you receive an image:
+
+1. ALWAYS acknowledge what you see explicitly before doing anything else. Describe the image in plain language: "I see a hand-drawn sketch showing a tall vertical cylinder with what looks like an impeller inside, and an arrow at the top suggesting water flow." This catches misinterpretations early and shows the inventor you're really looking.
+
+2. INCORPORATE the image into your understanding of the invention. Reference it naturally in subsequent turns. If the inventor describes something the image clarifies, connect them.
+
+3. ASK CLARIFYING QUESTIONS when the image is ambiguous. Don't guess at unlabeled parts. Don't assume scale. Don't infer materials. Ask.
+
+Do NOT use images to trigger captures. Captures happen based on conversational substance, not visual input alone. An image enriches the conversation; the conversation determines when to capture.`;
 
   return `You are an innovation coach at HAIIC (Human-AI Innovation Commons) helping an inventor develop a patentable idea through a single continuous conversation.
 
@@ -168,6 +227,8 @@ LANE AWARENESS
 ══════════════════════════════════════════════════════════════
 
 If the inventor drifts ahead (proposing solutions in the problem phase, etc.), gently park their idea — "Hold that thought, it'll fit better when we get to solutions" — and steer back to the current phase's work.
+
+${imageGuide}
 
 ══════════════════════════════════════════════════════════════
 STYLE
@@ -293,6 +354,28 @@ function parseCaptureMarker(text) {
 
   const visible = text.replace(match[0], "").trim();
   return { visible, proposal };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REFERENCED IMAGES — collect from messages for brief/handoff
+// ─────────────────────────────────────────────────────────────────────────────
+function collectReferencedImages(messages) {
+  const refs = [];
+  const seen = new Set();
+  for (const m of messages) {
+    if (!Array.isArray(m.attachments)) continue;
+    for (const att of m.attachments) {
+      if (att.type === "image" && att.storagePath && !seen.has(att.storagePath)) {
+        seen.add(att.storagePath);
+        refs.push({
+          storagePath: att.storagePath,
+          filename: att.filename || "image",
+          caption: m.content || "",
+        });
+      }
+    }
+  }
+  return refs;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -847,6 +930,8 @@ function BriefView({
     setLabelDraft("");
   };
 
+  const refCount = Array.isArray(selected.referencedImages) ? selected.referencedImages.length : 0;
+
   return (
     <div style={bv.wrap}>
       <div style={bv.header}>
@@ -875,6 +960,7 @@ function BriefView({
           )}
           <p style={bv.meta}>
             Version {selected.versionNumber} · {new Date(selected.createdAt).toLocaleString()}
+            {refCount > 0 && <span style={bv.refTag}>{refCount} image{refCount === 1 ? "" : "s"} attached</span>}
             {isLatest && <span style={bv.latestTag}>LATEST</span>}
           </p>
         </div>
@@ -967,6 +1053,7 @@ export default function BrainstormPage() {
   const [saving,      setSaving]      = useState(false);
   const [justSaved,   setJustSaved]   = useState(false);
   const [continuationFired, setContinuationFired] = useState(false);
+  const [signedUrlCache, setSUC] = useState({});
 
   const saveTimerRef = useRef(null);
 
@@ -1018,6 +1105,30 @@ export default function BrainstormPage() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [project, view, messages, captures, currentPhase, intent, intakeUpdates, briefs, selectedBriefId]);
 
+  // Hydrate signed URLs for any messages with attachments
+  useEffect(() => {
+    const hydrate = async () => {
+      const toFetch = [];
+      for (const m of messages) {
+        if (Array.isArray(m.attachments)) {
+          for (const att of m.attachments) {
+            if (att.storagePath && !signedUrlCache[att.storagePath]) {
+              toFetch.push(att.storagePath);
+            }
+          }
+        }
+      }
+      if (toFetch.length === 0) return;
+      const fresh = {};
+      for (const sp of toFetch) {
+        const url = await freshSignedUrl(sp);
+        if (url) fresh[sp] = url;
+      }
+      if (Object.keys(fresh).length > 0) setSUC((c) => ({ ...c, ...fresh }));
+    };
+    hydrate();
+  }, [messages]);
+
   const saveNow = async () => {
     if (!project) return;
     setSaving(true);
@@ -1040,10 +1151,31 @@ export default function BrainstormPage() {
     setTimeout(() => setJustSaved(false), 1200);
   };
 
-  const sendMessage = useCallback(async (text) => {
-    if (!text || chatLoading) return;
+  // Upload handler — passed to ChatThread
+  const handleUploadImage = async (file) => {
+    if (!user?.id || !project?.id) {
+      throw new Error("Missing user or project context");
+    }
+    return await uploadImageToBucket(file, user.id, project.id);
+  };
 
-    const newUserMsg = { role: "user", content: text, timestamp: new Date().toISOString() };
+  const sendMessage = useCallback(async (text, attachment) => {
+    if ((!text || !text.trim()) && !attachment) return;
+    if (chatLoading) return;
+
+    const newUserMsg = {
+      role: "user",
+      content: text || "",
+      timestamp: new Date().toISOString(),
+    };
+    if (attachment) {
+      newUserMsg.attachments = [{
+        type: "image",
+        storagePath: attachment.storagePath,
+        displayUrl: attachment.displayUrl,
+        filename: attachment.filename,
+      }];
+    }
     const nextMessages = [...messages, newUserMsg];
     setMessages(nextMessages);
     setPendingCapture(null);
@@ -1059,9 +1191,25 @@ export default function BrainstormPage() {
         briefs,
       });
 
-      const apiMessages = nextMessages
-        .filter((m) => m.role === "user" || m.role === "assistant")
-        .map((m) => ({ role: m.role, content: m.content }));
+      // Build API messages, translating attachments to short-lived signed URLs
+      const apiMessages = await Promise.all(
+        nextMessages
+          .filter((m) => m.role === "user" || m.role === "assistant")
+          .map(async (m) => {
+            const base = { role: m.role, content: m.content };
+            if (Array.isArray(m.attachments) && m.attachments.length > 0) {
+              const apiAttachments = [];
+              for (const att of m.attachments) {
+                if (att.type === "image" && att.storagePath) {
+                  const url = await freshSignedUrl(att.storagePath, 5 * 60);
+                  if (url) apiAttachments.push({ type: "image", url });
+                }
+              }
+              if (apiAttachments.length > 0) base.attachments = apiAttachments;
+            }
+            return base;
+          })
+      );
 
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -1263,6 +1411,11 @@ export default function BrainstormPage() {
         .filter((m) => m.role === "user" || m.role === "assistant")
         .map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
 
+      const referencedImages = collectReferencedImages(messages);
+      const imageContextLine = referencedImages.length > 0
+        ? `\n\nThe inventor uploaded ${referencedImages.length} image${referencedImages.length === 1 ? "" : "s"} during this session. Reference them in the brief where relevant (e.g., "see attached sketch of the impeller").`
+        : "";
+
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1291,7 +1444,7 @@ TARGET USERS
 [who and why]
 
 RECOMMENDED NEXT STEP
-This Invention Brief is ready to be taken into Patent Forge.`,
+This Invention Brief is ready to be taken into Patent Forge.${imageContextLine}`,
           messages: [{ role: "user", content: `Captures:\n${captureText}\n\nConversation:\n${convoText}` }],
           max_tokens: 2000,
         }),
@@ -1310,6 +1463,7 @@ This Invention Brief is ready to be taken into Patent Forge.`,
         label: "",
         content: text,
         capturesSnapshotIds: captures.map((c) => c.id),
+        referencedImages,
         createdAt: new Date().toISOString(),
       };
 
@@ -1349,12 +1503,16 @@ This Invention Brief is ready to be taken into Patent Forge.`,
       const title = titleMatch ? titleMatch[1].trim() : project?.name || "";
       const fieldMatch = brief.content.match(/Field:\s*(.+)/);
       const field = fieldMatch ? fieldMatch[1].trim() : "";
+      const referencedImages = Array.isArray(brief.referencedImages) && brief.referencedImages.length > 0
+        ? brief.referencedImages
+        : collectReferencedImages(messages);
       localStorage.setItem(HANDOFF_KEY, JSON.stringify({
         name: project?.name || title || "Brainstorm Import",
         patentTitle: title,
         patentField: field,
         field,
         inventionBrief: brief.content,
+        referencedImages,
         timestamp: new Date().toISOString(),
       }));
     } catch {}
@@ -1376,6 +1534,7 @@ This Invention Brief is ready to be taken into Patent Forge.`,
     setPendingCapture(null);
     setEditingCaptureId(null);
     setPendingRevision(null);
+    setSUC({});
     setView("session");
   };
 
@@ -1388,6 +1547,7 @@ This Invention Brief is ready to be taken into Patent Forge.`,
         label: "",
         content: d.inventionBrief,
         capturesSnapshotIds: (d.captures || []).map((c) => c.id),
+        referencedImages: [],
         createdAt: d.updated_at || new Date().toISOString(),
       }];
     }
@@ -1411,6 +1571,7 @@ This Invention Brief is ready to be taken into Patent Forge.`,
     setPendingCapture(null);
     setEditingCaptureId(null);
     setPendingRevision(null);
+    setSUC({});
     setView("session");
   };
 
@@ -1458,6 +1619,7 @@ What would you like to revisit? We can revise any of the captures, dig deeper on
     setPendingCapture(null);
     setEditingCaptureId(null);
     setPendingRevision(null);
+    setSUC({});
   };
 
   const handleDeleteLegacy = async (id, name) => {
@@ -1478,10 +1640,10 @@ What would you like to revisit? We can revise any of the captures, dig deeper on
     setCurrentPhase("problem");
     const opener =
       chosenIntent === "idea"
-        ? "Tell me about your idea — what is it, and what made you start thinking about it?"
+        ? "Tell me about your idea — what is it, and what made you start thinking about it? Feel free to attach a sketch or photo with the 📎 button if it helps."
         : chosenIntent === "problem"
-        ? "Tell me about the problem on your mind — what's frustrating, broken, or slow that you'd like to solve?"
-        : "Let's start broad. What's been on your mind lately — something you've been noticing, frustrated by, or curious about?";
+        ? "Tell me about the problem on your mind — what's frustrating, broken, or slow that you'd like to solve? Feel free to attach a sketch or photo with the 📎 button if it helps."
+        : "Let's start broad. What's been on your mind lately — something you've been noticing, frustrated by, or curious about? Feel free to attach a sketch or photo with the 📎 button if it helps.";
 
     setMessages([{
       role: "assistant",
@@ -1501,6 +1663,20 @@ What would you like to revisit? We can revise any of the captures, dig deeper on
     }
     return false;
   };
+
+  // Apply hydrated signed URLs to messages for display
+  const messagesForDisplay = messages.map((m) => {
+    if (!Array.isArray(m.attachments)) return m;
+    return {
+      ...m,
+      attachments: m.attachments.map((att) => {
+        if (att.type === "image" && att.storagePath) {
+          return { ...att, displayUrl: signedUrlCache[att.storagePath] || att.displayUrl };
+        }
+        return att;
+      }),
+    };
+  });
 
   if (authLoading) {
     return (
@@ -1548,8 +1724,8 @@ What would you like to revisit? We can revise any of the captures, dig deeper on
   const displayMessages = [];
   const inlineActions = [];
 
-  for (let i = 0; i < messages.length; i++) {
-    const m = messages[i];
+  for (let i = 0; i < messagesForDisplay.length; i++) {
+    const m = messagesForDisplay[i];
     if (m.role === "divider") {
       const attachIdx = displayMessages.length - 1;
       if (attachIdx >= 0) {
@@ -1571,8 +1747,8 @@ What would you like to revisit? We can revise any of the captures, dig deeper on
 
   if (pendingCapture) {
     let displayIdx = -1;
-    for (let i = 0; i <= pendingCapture.afterMsgIdx && i < messages.length; i++) {
-      if (messages[i].role !== "divider") displayIdx++;
+    for (let i = 0; i <= pendingCapture.afterMsgIdx && i < messagesForDisplay.length; i++) {
+      if (messagesForDisplay[i].role !== "divider") displayIdx++;
     }
     if (displayIdx >= 0) {
       inlineActions.push({
@@ -1642,6 +1818,8 @@ What would you like to revisit? We can revise any of the captures, dig deeper on
                     placeholder="Type a message…"
                     inlineActions={inlineActions}
                     hideInput={chatDisabled}
+                    onUploadImage={handleUploadImage}
+                    uploadEnabled={true}
                   />
 
                   {editingCapture && (
@@ -1862,6 +2040,7 @@ const bv = {
   labelBtn: { background: theme.red, border: "none", borderRadius: 6, color: "#fff", padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   labelBtnGhost: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   meta: { fontSize: 12, color: theme.textDim, margin: 0, marginTop: 4 },
+  refTag: { background: theme.surfaceAlt, color: theme.textMuted, borderRadius: 4, padding: "2px 6px", fontSize: 10, fontWeight: 600, marginLeft: 8, border: `1px solid ${theme.border}` },
   latestTag: { background: theme.red, color: "#fff", borderRadius: 4, padding: "2px 6px", fontSize: 9, fontWeight: 700, marginLeft: 8, letterSpacing: 1 },
   versionSelect: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 7, color: theme.text, padding: "7px 10px", fontSize: 12, fontFamily: "'DM Sans', sans-serif", outline: "none" },
   staleNotice: { background: "#2a2419", border: "1px solid #4a4019", borderRadius: 8, color: "#d4b87a", padding: "12px 16px", fontSize: 13, lineHeight: 1.6, marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" },
