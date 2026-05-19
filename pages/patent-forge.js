@@ -6,10 +6,11 @@ import ChatThread from "../components/ChatThread";
 import theme from "../components/theme";
 
 const SECTIONS = [
-  { id: "inventor",   label: "Inventor Info",  icon: "①" },
-  { id: "agreement",  label: "Our Vision",     icon: "②" },
-  { id: "title",      label: "Title & Field",  icon: "③" },
-  { id: "drafting",   label: "Drafting",       icon: "④" },
+  { id: "inventor",   label: "Inventor Info",     icon: "①" },
+  { id: "agreement",  label: "Our Vision",        icon: "②" },
+  { id: "title",      label: "Title & Field",     icon: "③" },
+  { id: "drafting",   label: "Drafting",          icon: "④" },
+  { id: "filings",    label: "Filing Drafts",     icon: "⑤" },
 ];
 
 const HANDOFF_KEY    = "haiic_pf_handoff";
@@ -32,6 +33,11 @@ function genId() { return Date.now().toString(36) + Math.random().toString(36).s
 function briefDisplayName(brief) {
   if (!brief) return "Untitled brief";
   return (brief.label && brief.label.trim()) || `Brief v${brief.versionNumber}`;
+}
+
+function filingDisplayName(filing) {
+  if (!filing) return "Untitled filing";
+  return (filing.label && filing.label.trim()) || `Filing Draft v${filing.versionNumber}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -78,8 +84,6 @@ async function freshSignedUrl(storagePath, expirySeconds = 60 * 60) {
   return data.signedUrl;
 }
 
-// Copy an image from a source storagePath (typically a Brainstorm folder) to a
-// new destination under {userId}/{projectId}/. Returns the new storagePath.
 async function copyImageToProjectFolder(sourceStoragePath, userId, projectId) {
   try {
     const { data: blob, error: downloadError } = await supabase.storage
@@ -133,32 +137,29 @@ function buildDraftingSystemPrompt({ project, captures, currentPhase, fromBrains
     ? `YOU ARE IN THE DESCRIBE PHASE.
 - Help ${inventor} walk through how the invention works in detail.
 - Ask follow-up questions about components, mechanisms, materials, alternative embodiments.
-- When you have enough material for a coherent description chunk (a component, a mechanism, an embodiment), CAPTURE IT SILENTLY using [CAPTURE_PROPOSED] with type "description_block". Then mention it conversationally in your reply: "I captured that as a description block: '...'" — explicit and brief.
-- When you notice something potentially claimable, CAPTURE IT SILENTLY using [CLAIMABLE_NOTED]. Mention it explicitly: "I noted that as a claimable concept: '...'"
-- Do NOT draft claims in this phase. Claim drafting happens in the next phase.
-- Do NOT ask the user for approval before capturing — captures auto-save and the user reviews them in the sidebar at their own pace.
-- The user can move to the claim phase using the button in the sidebar. You don't need to prompt them about it; let the work guide the timing.`
+- When you have enough material for a coherent description chunk, CAPTURE IT SILENTLY using [CAPTURE_PROPOSED] with type "description_block". Then mention it conversationally: "I captured that as a description block: '...'"
+- When you notice something potentially claimable, CAPTURE IT SILENTLY using [CLAIMABLE_NOTED]. Mention it: "I noted that as a claimable concept: '...'"
+- Do NOT draft claims in this phase.
+- Do NOT ask the user for approval before capturing — captures auto-save.
+- The user can move to the claim phase using the button in the sidebar. Let the work guide the timing.`
     : `YOU ARE IN THE CLAIM PHASE.
 - The describe phase is complete. You have ${descBlocks.length} description blocks and ${claimables.length} claimable concepts to work from.
-- Your job is to draft claims for ${inventor}. ${inventor} is not a patent attorney and does not know the difference between independent and dependent claims — handle the structure for them.
-- Draft a complete set of claims: one broad independent claim that captures the core invention, then 2-4 dependent claims that narrow it usefully.
-- CAPTURE EACH CLAIM SILENTLY using [CAPTURE_PROPOSED] with type "claim". Title format: "Claim 1", "Claim 2", etc. Content should include both formal patent language AND a plain-English version.
+- Your job is to draft claims for ${inventor}, who is NOT a patent attorney.
+- Draft a complete set: one broad independent claim, then 2-4 dependent claims that narrow it usefully.
+- CAPTURE EACH CLAIM SILENTLY using [CAPTURE_PROPOSED] with type "claim". Title format: "Claim 1", "Claim 2", etc. Content includes both formal patent language AND a plain-English version.
 - Mention each capture conversationally: "I drafted Claim 1 — it covers the core mechanism in broad terms."
-- After drafting, invite ${inventor} to react. Help them refine specific claims based on their feedback (they can edit any claim from the sidebar).
+- After drafting the initial set, invite ${inventor} to react. Help them refine specific claims based on their feedback.
+- The user can ask you to revise specific claims at any time. When they do, draft a revised version and propose it as a new claim capture — do not modify existing claim captures directly; the user edits those from the sidebar.
 - Do NOT propose new description_block or claimable_concept captures in this phase.`;
 
   const imageGuide = `
 HANDLING IMAGE ATTACHMENTS
 
-The inventor may attach images (sketches, photos, diagrams). When you receive an image:
-
-1. ALWAYS acknowledge what you see explicitly before doing anything else. Describe the image in plain language. This catches misinterpretations early.
-
-2. INCORPORATE the image into your understanding. When you later propose a description_block, reference what you saw.
-
-3. FLAG CLAIMABLE FEATURES visible only in the image. Sometimes the image reveals details the inventor didn't articulate. If you see something potentially claimable — an angle, a spacing, an arrangement — note it as a claimable concept even if the user didn't mention it.
-
-4. ASK CLARIFYING QUESTIONS when the image is ambiguous. Don't guess at unlabeled parts. Don't assume scale. Don't infer materials. Ask.`;
+The inventor may attach images. When you receive an image:
+1. ALWAYS acknowledge what you see explicitly before doing anything else.
+2. INCORPORATE the image into your understanding. Reference it when proposing description blocks.
+3. FLAG CLAIMABLE FEATURES visible only in the image.
+4. ASK CLARIFYING QUESTIONS when ambiguous. Don't guess.`;
 
   const captureGuide = `
 CAPTURE MARKERS
@@ -178,11 +179,11 @@ For claimable concepts (describe phase only):
 [/CLAIMABLE_NOTED]
 
 CRITICAL RULES
-- In describe phase, ONLY emit description_block or claimable_concept markers. NEVER emit claim markers in describe phase.
-- In claim phase, ONLY emit claim markers. NEVER emit description_block or claimable_concept markers in claim phase.
-- One CAPTURE_PROPOSED marker per turn maximum. CLAIMABLE_NOTED can appear in the same turn as a CAPTURE_PROPOSED.
-- ALWAYS continue the conversation in natural language alongside any markers — the markers are silent metadata; the user only sees your prose.
-- ALWAYS mention each capture explicitly in your prose so the user knows what just happened.`;
+- In describe phase, ONLY emit description_block or claimable_concept markers.
+- In claim phase, ONLY emit claim markers.
+- One CAPTURE_PROPOSED marker per turn maximum. CLAIMABLE_NOTED can appear in the same turn.
+- ALWAYS continue the conversation in natural language alongside any markers.
+- ALWAYS mention each capture explicitly so the user knows what just happened.`;
 
   const contextBlock = `
 INVENTION CONTEXT
@@ -199,9 +200,10 @@ CURRENT CAPTURE STATE
   ${descBlocks.map(c => `  • ${c.title}`).join("\n") || "  (none yet)"}
 - Claimable concepts: ${claimables.length}
   ${claimables.map(c => `  • ${c.title}`).join("\n") || "  (none yet)"}
-- Drafted claims: ${drafted.length}`;
+- Drafted claims: ${drafted.length}
+  ${drafted.map(c => `  • ${c.title}`).join("\n") || "  (none yet)"}`;
 
-  return `You are a patent drafting collaborator at HAIIC, helping inventors who are NOT patent attorneys draft provisional patent applications. Tone: warm, plain-English, never condescending. Translate jargon. Push for detail that lets someone in the field reproduce the invention. ${inventor} should never need to know terms like "independent claim" vs "dependent claim" — handle the structure for them.
+  return `You are a patent drafting collaborator at HAIIC, helping inventors who are NOT patent attorneys draft provisional patent applications. Tone: warm, plain-English, never condescending. Translate jargon. Push for detail that lets someone in the field reproduce the invention.
 
 ${contextBlock}
 
@@ -213,21 +215,19 @@ ${captureGuide}`;
 }
 
 function buildImportAcknowledgmentPrompt({ patentTitle, brainstormBrief, imageCount }) {
-  return `You are a patent drafting collaborator at HAIIC. The inventor has just brought work over from a Brainstorm session, and that work includes ${imageCount} image${imageCount === 1 ? "" : "s"} they uploaded during Brainstorm. Your job is to write an opening message that:
+  return `You are a patent drafting collaborator at HAIIC. The inventor has just brought work over from a Brainstorm session, including ${imageCount} image${imageCount === 1 ? "" : "s"} they uploaded during Brainstorm. Write an opening message that:
 
 1. Acknowledges the project name and that you have the Brainstorm work in front of you.
-2. Describes what you see in EACH attached image explicitly, in plain language. Don't be vague — name what's drawn, sketched, or photographed. If parts are unlabeled, say so and ask.
-3. Briefly explains how Drafting works: you'll talk through the invention in detail, capture description blocks and claimable concepts as you go, and move to claims when ready.
-4. Asks one good opening question that builds on what they've already done.
+2. Describes what you see in EACH attached image explicitly, in plain language. Name what's drawn or sketched. If parts are unlabeled, say so and ask.
+3. Briefly explains how Drafting works: you'll talk through the invention in detail, capture description blocks and claimable concepts, and move to claims when ready.
+4. Asks one good opening question.
 
 Project title: ${patentTitle}
 
 Invention Brief (for your context):
 ${brainstormBrief.substring(0, 1500)}
 
-Keep your message warm and direct. Address the images one at a time — the inventor will know which one you mean.
-
-Do NOT propose any captures in this opening message. Do NOT use [CAPTURE_PROPOSED] or [CLAIMABLE_NOTED] markers. This is purely an acknowledgment and orientation message.`;
+Do NOT propose any captures. Do NOT use marker tags. This is orientation only.`;
 }
 
 function buildNoveltyPrompt(captures) {
@@ -237,14 +237,14 @@ function buildNoveltyPrompt(captures) {
 
   return `You are a knowledgeable friend who has been through the patent process. Give an honest, plain-English read on novelty and patentability based on what the inventor has captured so far.
 
-You MUST start your response with a single integer between 1 and 10 inside [SCORE] tags, like this: [SCORE]4[/SCORE]
+You MUST start your response with a single integer between 1 and 10 inside [SCORE] tags: [SCORE]4[/SCORE]
 
 Scoring guide:
-- 1-2: Nothing claimable yet (almost no captures, or only restatements of common knowledge)
+- 1-2: Nothing claimable yet
 - 3-4: Early — something potentially novel but underspecified
-- 5-6: Promising — clear novel elements, needs more detail to be defensible
-- 7-8: Strong — distinctive mechanism, well-specified, plausibly defensible against prior art
-- 9-10: Excellent — clearly novel, well-described, multiple claimable angles
+- 5-6: Promising — clear novel elements, needs more detail
+- 7-8: Strong — distinctive mechanism, well-specified
+- 9-10: Excellent — clearly novel, multiple claimable angles
 
 After the score, provide:
 
@@ -262,7 +262,7 @@ One paragraph.
 
 End with: "Remember: the first idea is rarely the best — every refinement gets you closer. This is a starting point, not a verdict. A registered patent attorney can run a full prior art search before you file."
 
-CAPTURES TO ASSESS:
+CAPTURES:
 
 Description Blocks (${descBlocks.length}):
 ${descBlocks.map(c => `• ${c.title}: ${c.content}`).join("\n") || "(none)"}
@@ -272,6 +272,88 @@ ${claimables.map(c => `• ${c.title}: ${c.content}`).join("\n") || "(none)"}
 
 Drafted Claims (${claims.length}):
 ${claims.map(c => `• ${c.title}: ${c.content}`).join("\n") || "(none)"}`;
+}
+
+function buildFilingDraftPrompt({ project, captures, brainstormBrief, referencedImages }) {
+  const data = project.data || {};
+  const title = data.patentTitle || "(untitled)";
+  const field = data.patentField || "(unspecified field)";
+  const summary = data.summary || "";
+  const inventor = data.inventorName || "the inventor";
+  const city = data.city || "";
+  const state = data.state || "";
+  const country = data.country || "United States";
+
+  const descBlocks = captures.filter(c => c.type === "description_block");
+  const claimables = captures.filter(c => c.type === "claimable_concept");
+  const claims = captures.filter(c => c.type === "claim");
+
+  const imageInventory = (referencedImages || []).length === 0
+    ? "(no figures attached during drafting)"
+    : referencedImages.map((img, i) => `Figure ${i + 1}: ${img.caption || img.filename || "Attached image"}`).join("\n");
+
+  return `You are drafting a USPTO provisional patent application for ${inventor}. Produce a complete, USPTO-standard provisional patent application using ONLY the sections and structure below. Do not add commentary, explanation, headers outside the structure, or markdown formatting. The output should look like a real provisional patent application.
+
+OUTPUT FORMAT (use these exact section headers, all caps, in this exact order):
+
+TITLE OF THE INVENTION
+${title}
+
+CROSS-REFERENCE TO RELATED APPLICATIONS
+[State "None at this time." unless prior application data is provided.]
+
+FIELD OF THE INVENTION
+[One paragraph naming the technical field this invention belongs to. Concise and clear.]
+
+BACKGROUND OF THE INVENTION
+[2-3 paragraphs describing the problem this invention solves. Cover: what's broken or inadequate in current solutions, who is affected, what attempts have been made. Avoid quoting the Brainstorm brief directly — write fresh prose grounded in the inventor's captures.]
+
+BRIEF SUMMARY OF THE INVENTION
+[2-3 paragraphs giving a high-level overview of the invention. What it is, what it does, what makes it different. Plain language; the abstract goes deeper later.]
+
+BRIEF DESCRIPTION OF THE DRAWINGS
+[List each figure on its own line in the format "FIG. 1 — [description]". If no figures are attached, write "No drawings accompany this provisional application." If figures exist, describe what each one shows in one line.]
+
+DETAILED DESCRIPTION OF THE INVENTION
+[The substantial body of the application. Walk through every aspect of the invention thoroughly. Use the description blocks as your source material. Reference figures by number where the inventor mentioned a visual element. Describe components, mechanisms, materials, alternative embodiments. This section should be detailed enough that a person skilled in the art could reproduce the invention.]
+
+CLAIMS
+[Number each claim sequentially. The first claim is independent (broad scope). Subsequent dependent claims narrow it. Each claim is a single sentence. Use the formal patent claim structure: "What is claimed is:" then numbered claims. Use the claims captured during drafting — render their formal language, not the plain-English versions.]
+
+ABSTRACT
+[A single paragraph, 150 words maximum, summarizing the technical disclosure. Per USPTO rule.]
+
+INVENTOR INFORMATION
+Name: ${inventor}
+Residence: ${city}${state ? ", " + state : ""}${country ? ", " + country : ""}
+
+INVENTION DATA TO USE:
+
+Title: ${title}
+Field: ${field}
+Project Summary: ${summary}
+
+${brainstormBrief ? `Brainstorm Invention Brief (for background context):
+${brainstormBrief}
+
+` : ""}Description Blocks (${descBlocks.length}) — use these for the Detailed Description:
+${descBlocks.map(c => `[${c.title}]\n${c.content}`).join("\n\n") || "(none — note this gap in the Detailed Description)"}
+
+Claimable Concepts (${claimables.length}) — referenced concepts that may inform claims or detailed description:
+${claimables.map(c => `[${c.title}]\n${c.content}`).join("\n\n") || "(none)"}
+
+Claims (${claims.length}) — use these for the Claims section:
+${claims.map(c => `[${c.title}]\n${c.content}`).join("\n\n") || "(none — note this in the Claims section)"}
+
+Figures attached during drafting:
+${imageInventory}
+
+CRITICAL INSTRUCTIONS
+- Output ONLY the formatted patent application as specified above.
+- Do not add introductory text, closing text, or commentary.
+- Each section header should appear exactly as shown, in all caps, on its own line.
+- Use formal patent application voice in the body. Plain-English where it doesn't sacrifice precision.
+- The output will be saved verbatim as a Filing Draft and exported to .docx.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -313,6 +395,155 @@ function parseScore(text) {
 
 function stripScore(text) {
   return text.replace(/\[SCORE\]\d+\[\/SCORE\]/, "").trim();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COLLECT REFERENCED IMAGES (for filing draft generation)
+// ─────────────────────────────────────────────────────────────────────────────
+function collectReferencedImages(messages, importedImages) {
+  const refs = [];
+  const seen = new Set();
+  if (Array.isArray(importedImages)) {
+    for (const img of importedImages) {
+      if (img.storagePath && !seen.has(img.storagePath)) {
+        seen.add(img.storagePath);
+        refs.push({
+          storagePath: img.storagePath,
+          filename: img.filename || "imported image",
+          caption: img.caption || "From Brainstorm",
+        });
+      }
+    }
+  }
+  for (const m of messages) {
+    if (!Array.isArray(m.attachments)) continue;
+    for (const att of m.attachments) {
+      if (att.type === "image" && att.storagePath && !seen.has(att.storagePath)) {
+        seen.add(att.storagePath);
+        refs.push({
+          storagePath: att.storagePath,
+          filename: att.filename || "image",
+          caption: m.content?.slice(0, 80) || "Attached during drafting",
+        });
+      }
+    }
+  }
+  return refs;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FILING DRAFT .DOCX EXPORT
+// ─────────────────────────────────────────────────────────────────────────────
+async function exportFilingToDocx(project, handle, filing) {
+  const { name } = project;
+  const {
+    Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
+    BorderStyle, Header, Footer, PageNumber, TabStopType, TabStopPosition,
+  } = await import("docx");
+
+  const RED = "C0392B", GRAY = "555555", BLACK = "1A1A1A";
+
+  const sectionHeaderRe = /^[A-Z][A-Z\s&-]+$/;
+
+  const lines = (filing.content || "").split("\n");
+  const children = [];
+
+  children.push(
+    new Paragraph({
+      spacing: { after: 60 },
+      children: [new TextRun({
+        text: "HUMAN-AI INNOVATION COMMONS",
+        font: "Arial", size: 18, bold: true, color: RED, allCaps: true,
+      })],
+    }),
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      spacing: { after: 60 },
+      children: [new TextRun({
+        text: "PROVISIONAL PATENT APPLICATION",
+        font: "Arial", size: 32, bold: true, color: BLACK,
+      })],
+    }),
+    new Paragraph({
+      spacing: { after: 240 },
+      children: [new TextRun({
+        text: `${filingDisplayName(filing)} · Drafted by ${handle || "the inventor"} · ${new Date(filing.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}`,
+        font: "Arial", size: 18, color: GRAY, italics: true,
+      })],
+    }),
+  );
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      children.push(new Paragraph({ children: [new TextRun("")], spacing: { after: 120 } }));
+      continue;
+    }
+    if (sectionHeaderRe.test(trimmed) && trimmed.length > 3 && trimmed.length < 60) {
+      children.push(
+        new Paragraph({
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 320, after: 120 },
+          border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: RED, space: 4 } },
+          children: [new TextRun({ text: trimmed, color: RED, bold: true, font: "Arial", size: 24 })],
+        }),
+      );
+    } else {
+      children.push(
+        new Paragraph({
+          spacing: { after: 100 },
+          children: [new TextRun({ text: trimmed, font: "Arial", size: 22, color: GRAY })],
+        }),
+      );
+    }
+  }
+
+  const doc = new Document({
+    styles: {
+      default: { document: { run: { font: "Arial", size: 22 } } },
+      paragraphStyles: [
+        {
+          id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true,
+          run: { size: 32, bold: true, font: "Arial", color: BLACK },
+          paragraph: { spacing: { before: 0, after: 60 }, outlineLevel: 0 },
+        },
+        {
+          id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true,
+          run: { size: 24, bold: true, font: "Arial", color: RED },
+          paragraph: { spacing: { before: 320, after: 120 }, outlineLevel: 1 },
+        },
+      ],
+    },
+    sections: [{
+      properties: { page: { size: { width: 12240, height: 15840 }, margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } } },
+      headers: { default: new Header({ children: [new Paragraph({
+        tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
+        border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: RED, space: 4 } },
+        children: [
+          new TextRun({ text: "HAIIC Patent Forge", font: "Arial", size: 18, color: RED, bold: true }),
+          new TextRun({ text: "\tapps-haiic.com", font: "Arial", size: 18, color: GRAY }),
+        ],
+      })] }) },
+      footers: { default: new Footer({ children: [new Paragraph({
+        tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
+        children: [
+          new TextRun({ text: `${filingDisplayName(filing)}  ·  Drafted with Claude  ·  Inventor: ${handle || "—"}`, font: "Arial", size: 16, color: GRAY }),
+          new TextRun({ children: ["\t", PageNumber.CURRENT], font: "Arial", size: 16, color: GRAY }),
+        ],
+      })] }) },
+      children,
+    }],
+  });
+
+  const blob = await Packer.toBlob(doc);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `HAIIC-Patent-Forge-${(name || "filing").replace(/[^a-z0-9]/gi, "-").toLowerCase()}-${filingDisplayName(filing).replace(/\s+/g, "-").toLowerCase()}.docx`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -394,7 +625,7 @@ function PatentForgeSidebar({ captures, currentPhase, onEditCapture, onDeleteCap
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// NOVELTY ADVISOR (live tracker)
+// NOVELTY ADVISOR
 // ─────────────────────────────────────────────────────────────────────────────
 function NoveltyAdvisor({ captures, savedScore, savedAssessment, savedThread, onSave }) {
   const [open, setOpen]               = useState(false);
@@ -499,7 +730,7 @@ function NoveltyAdvisor({ captures, savedScore, savedAssessment, savedThread, on
       {open && (
         <div style={na.panel}>
           <p style={na.intro}>
-            An honest read on patentability that updates as you describe more. The score is directional — a single AI's read, not a guarantee.
+            An honest read on patentability that updates as you describe more. Directional — a single AI's read, not a guarantee.
           </p>
 
           {loading && <p style={na.loadingMsg}>Assessing…</p>}
@@ -692,19 +923,205 @@ function TypedDeleteModal({ capture, onConfirm, onCancel }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DRAFTING SECTION
+// FILINGS VIEW
+// ─────────────────────────────────────────────────────────────────────────────
+function FilingsView({
+  project,
+  handle,
+  filings,
+  selectedFilingId,
+  setSelectedFilingId,
+  captures,
+  onGenerateFiling,
+  onRenameFiling,
+  onDeleteFiling,
+  onMarkReady,
+  generating,
+}) {
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [labelDraft, setLabelDraft] = useState("");
+
+  const hasAny = filings.length > 0;
+  const selected = hasAny ? (filings.find(f => f.id === selectedFilingId) || filings[filings.length - 1]) : null;
+  const isLatest = selected?.id === filings[filings.length - 1]?.id;
+
+  const descCount = captures.filter(c => c.type === "description_block").length;
+  const claimCount = captures.filter(c => c.type === "claim").length;
+  const canGenerate = descCount >= 1 && claimCount >= 1;
+
+  const computeStale = () => {
+    if (!selected) return false;
+    const snap = selected.capturesSnapshotIds || [];
+    const cur = captures.map(c => c.id);
+    if (snap.length !== cur.length) return true;
+    for (let i = 0; i < snap.length; i++) if (snap[i] !== cur[i]) return true;
+    return false;
+  };
+
+  const stale = computeStale();
+
+  if (!hasAny) {
+    return (
+      <div style={fv.wrap}>
+        <div style={fv.emptyCard}>
+          <h2 style={fv.emptyTitle}>No Filing Drafts yet</h2>
+          <p style={fv.emptyText}>
+            A Filing Draft is a complete USPTO-structured provisional patent application generated from your description blocks and claims. You'll likely make several drafts as you refine — each version is saved so you can compare and revise.
+          </p>
+          {!canGenerate && (
+            <p style={fv.emptyText}>
+              You need at least one description block and one claim before generating your first draft.
+              Currently: <strong>{descCount}</strong> description block{descCount === 1 ? "" : "s"}, <strong>{claimCount}</strong> claim{claimCount === 1 ? "" : "s"}.
+              Return to Drafting to continue.
+            </p>
+          )}
+          {canGenerate && (
+            <button
+              onClick={onGenerateFiling}
+              disabled={generating}
+              style={{ ...fv.generateBtn, opacity: generating ? 0.6 : 1 }}
+            >
+              {generating ? "Generating Filing Draft v1…" : "Generate Filing Draft v1 →"}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const startRename = () => { setLabelDraft(selected.label || ""); setEditingLabel(true); };
+  const commitLabel = () => { onRenameFiling(selected.id, labelDraft.trim()); setEditingLabel(false); };
+  const cancelLabel = () => { setEditingLabel(false); setLabelDraft(""); };
+
+  return (
+    <div style={fv.wrap}>
+      <div style={fv.header}>
+        <div style={fv.headerLeft}>
+          {editingLabel ? (
+            <div style={fv.labelEditRow}>
+              <input
+                style={fv.labelInput}
+                value={labelDraft}
+                onChange={e => setLabelDraft(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") commitLabel(); if (e.key === "Escape") cancelLabel(); }}
+                placeholder={`Filing Draft v${selected.versionNumber}`}
+                autoFocus
+              />
+              <button onClick={commitLabel} style={fv.labelBtn}>Save</button>
+              <button onClick={cancelLabel} style={fv.labelBtnGhost}>Cancel</button>
+            </div>
+          ) : (
+            <div style={fv.titleRow}>
+              <h2 style={fv.title}>{filingDisplayName(selected)}</h2>
+              <button onClick={startRename} style={fv.renameBtn} title="Rename">✏</button>
+              {selected.markedReady && <span style={fv.readyBadge}>FILING READY</span>}
+            </div>
+          )}
+          <p style={fv.meta}>
+            Version {selected.versionNumber} · {new Date(selected.createdAt).toLocaleString()}
+            {isLatest && <span style={fv.latestTag}>LATEST</span>}
+          </p>
+        </div>
+
+        {filings.length > 1 && (
+          <select
+            style={fv.versionSelect}
+            value={selected.id}
+            onChange={e => setSelectedFilingId(e.target.value)}
+          >
+            {filings.slice().reverse().map(f => (
+              <option key={f.id} value={f.id}>
+                {filingDisplayName(f)}{f.id === filings[filings.length - 1].id ? " (latest)" : ""}{f.markedReady ? " · READY" : ""}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {isLatest && stale && (
+        <div style={fv.staleNotice}>
+          Your captures have changed since this draft was generated. Generate a new version to incorporate the changes.
+          <button
+            onClick={onGenerateFiling}
+            disabled={generating}
+            style={{ ...fv.staleBtn, opacity: generating ? 0.6 : 1 }}
+          >
+            {generating ? "Generating…" : "Generate new draft →"}
+          </button>
+        </div>
+      )}
+
+      <div style={fv.card}>
+        <pre style={fv.text}>{selected.content}</pre>
+      </div>
+
+      <div style={fv.actions}>
+        <button onClick={() => navigator.clipboard.writeText(selected.content)} style={fv.copyBtn}>
+          Copy to Clipboard
+        </button>
+        <button onClick={() => exportFilingToDocx(project, handle, selected)} style={fv.downloadBtn}>
+          Download .docx
+        </button>
+        {!selected.markedReady ? (
+          <button onClick={() => onMarkReady(selected.id, true)} style={fv.readyBtn}>
+            Mark as Filing Ready
+          </button>
+        ) : (
+          <button onClick={() => onMarkReady(selected.id, false)} style={fv.readyBtnUnmark}>
+            Unmark Filing Ready
+          </button>
+        )}
+        {filings.length > 1 && (
+          <button onClick={() => onDeleteFiling(selected.id)} style={fv.deleteBtn} title="Delete this draft">
+            Delete draft
+          </button>
+        )}
+      </div>
+
+      {canGenerate && isLatest && !stale && (
+        <div style={fv.regenBar}>
+          <p style={fv.regenText}>
+            Refined the draft? Generate a new version to incorporate your latest changes.
+          </p>
+          <button
+            onClick={onGenerateFiling}
+            disabled={generating}
+            style={{ ...fv.regenBtn, opacity: generating ? 0.6 : 1 }}
+          >
+            {generating ? "Generating…" : `Generate Filing Draft v${(filings[filings.length - 1].versionNumber || 0) + 1} →`}
+          </button>
+        </div>
+      )}
+
+      {!isLatest && (
+        <p style={fv.viewingOlderNote}>
+          You're viewing an older draft. The latest is{" "}
+          <button onClick={() => setSelectedFilingId(filings[filings.length - 1].id)} style={fv.linkBtn}>
+            {filingDisplayName(filings[filings.length - 1])}
+          </button>.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DRAFTING SECTION (with Chat / Filings tabs)
 // ─────────────────────────────────────────────────────────────────────────────
 function DraftingSection({ project, data, setData, handle, userId }) {
   const [messages, setMessages]           = useState(data.messages || []);
   const [captures, setCaptures]           = useState(data.captures || []);
   const [currentPhase, setCurrentPhase]   = useState(data.currentPhase || "describe");
+  const [filings, setFilings]             = useState(data.filings || []);
+  const [selectedFilingId, setSelectedFilingId] = useState(data.selectedFilingId || null);
+  const [activeTab, setActiveTab]         = useState("chat");
   const [editingCapture, setEC]           = useState(null);
   const [deletingCapture, setDC]          = useState(null);
   const [loading, setLoading]             = useState(false);
+  const [generating, setGenerating]       = useState(false);
   const [signedUrlCache, setSUC]          = useState({});
   const initialized                       = useRef(false);
 
-  // Hydrate signed URLs for any messages that have attachments
   useEffect(() => {
     const hydrate = async () => {
       const toFetch = [];
@@ -728,7 +1145,6 @@ function DraftingSection({ project, data, setData, handle, userId }) {
     hydrate();
   }, [messages]);
 
-  // Bootstrap opener on first entry
   useEffect(() => {
     if (initialized.current) return;
     if (messages.length > 0) { initialized.current = true; return; }
@@ -738,8 +1154,6 @@ function DraftingSection({ project, data, setData, handle, userId }) {
     const importedImages = Array.isArray(data.importedImages) ? data.importedImages : [];
 
     if (fromBrainstorm && importedImages.length > 0) {
-      // Image-aware import opener — make an API call that includes the images,
-      // and let the AI acknowledge what it sees in each one.
       bootstrapImportAcknowledgmentOpener(importedImages);
       return;
     }
@@ -760,7 +1174,6 @@ function DraftingSection({ project, data, setData, handle, userId }) {
   const bootstrapImportAcknowledgmentOpener = async (importedImages) => {
     setLoading(true);
     try {
-      // Get short-lived URLs for each imported image for the API call
       const apiAttachments = [];
       for (const img of importedImages) {
         const url = await freshSignedUrl(img.storagePath, 5 * 60);
@@ -789,7 +1202,6 @@ function DraftingSection({ project, data, setData, handle, userId }) {
       const r = await res.json();
       const text = r.content?.map(i => i.type === "text" ? i.text : "").join("\n") || "Welcome to Drafting. Let's start by walking through your invention.";
 
-      // The opener message has all the imported images attached for display
       const openerMsg = {
         id: genId(),
         role: "assistant",
@@ -821,22 +1233,23 @@ function DraftingSection({ project, data, setData, handle, userId }) {
     }
   };
 
-  // Persist on every change
   useEffect(() => {
-    setData({ ...data, messages, captures, currentPhase });
-  }, [messages, captures, currentPhase]);
+    setData({ ...data, messages, captures, currentPhase, filings, selectedFilingId });
+  }, [messages, captures, currentPhase, filings, selectedFilingId]);
 
   useEffect(() => {
     const flush = () => {
       try {
-        supabase.from(TABLE).update({ data: { ...data, messages, captures, currentPhase }, updated_at: new Date().toISOString() }).eq("id", project.id);
+        supabase.from(TABLE).update({
+          data: { ...data, messages, captures, currentPhase, filings, selectedFilingId },
+          updated_at: new Date().toISOString(),
+        }).eq("id", project.id);
       } catch {}
     };
     window.addEventListener("beforeunload", flush);
     return () => window.removeEventListener("beforeunload", flush);
-  }, [messages, captures, currentPhase]);
+  }, [messages, captures, currentPhase, filings, selectedFilingId]);
 
-  // Apply hydrated signed URLs to messages for display
   const messagesForDisplay = messages.map(m => {
     if (!Array.isArray(m.attachments)) return m;
     return {
@@ -851,9 +1264,7 @@ function DraftingSection({ project, data, setData, handle, userId }) {
   });
 
   const handleUploadImage = async (file) => {
-    if (!userId || !project?.id) {
-      throw new Error("Missing user or project context");
-    }
+    if (!userId || !project?.id) throw new Error("Missing user or project context");
     return await uploadImageToBucket(file, userId, project.id);
   };
 
@@ -928,7 +1339,6 @@ function DraftingSection({ project, data, setData, handle, userId }) {
       setMessages(m => [...m, assistantMsg]);
 
       const newCaptures = [];
-
       validProposals.forEach(p => {
         newCaptures.push({
           id: genId(),
@@ -955,9 +1365,7 @@ function DraftingSection({ project, data, setData, handle, userId }) {
         });
       }
 
-      if (newCaptures.length > 0) {
-        setCaptures(prev => [...prev, ...newCaptures]);
-      }
+      if (newCaptures.length > 0) setCaptures(prev => [...prev, ...newCaptures]);
     } catch (err) {
       console.error("sendMessage error:", err);
       const errorMsg = {
@@ -1039,6 +1447,80 @@ function DraftingSection({ project, data, setData, handle, userId }) {
     }
   };
 
+  const handleGenerateFiling = async () => {
+    if (generating) return;
+    setGenerating(true);
+    try {
+      const importedImages = Array.isArray(data.importedImages) ? data.importedImages : [];
+      const referencedImages = collectReferencedImages(messages, importedImages);
+
+      const system = buildFilingDraftPrompt({
+        project,
+        captures,
+        brainstormBrief: data.brainstormBrief,
+        referencedImages,
+      });
+
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system,
+          messages: [{ role: "user", content: "Produce the complete USPTO provisional patent application now." }],
+          max_tokens: 8000,
+        }),
+      });
+      const r = await res.json();
+      const text = r.content?.map(i => i.type === "text" ? i.text : "").join("\n") || "Unable to generate filing draft.";
+
+      const nextVersionNumber = filings.length > 0
+        ? Math.max(...filings.map(f => f.versionNumber)) + 1
+        : 1;
+
+      const newFiling = {
+        id: genId(),
+        versionNumber: nextVersionNumber,
+        label: "",
+        content: text,
+        capturesSnapshotIds: captures.map(c => c.id),
+        referencedImages,
+        markedReady: false,
+        createdAt: new Date().toISOString(),
+      };
+
+      const nextFilings = [...filings, newFiling];
+      setFilings(nextFilings);
+      setSelectedFilingId(newFiling.id);
+      setActiveTab("filings");
+    } catch (err) {
+      console.error("Filing generation failed:", err);
+      alert("Filing draft generation failed. Try again in a moment.");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleRenameFiling = (filingId, newLabel) => {
+    setFilings(prev => prev.map(f => f.id === filingId ? { ...f, label: newLabel } : f));
+  };
+
+  const handleDeleteFiling = (filingId) => {
+    if (filings.length <= 1) {
+      alert("Can't delete the only filing draft. Generate a new version first if you want to replace it.");
+      return;
+    }
+    if (!confirm("Delete this filing draft? This cannot be undone.")) return;
+    const nextFilings = filings.filter(f => f.id !== filingId);
+    setFilings(nextFilings);
+    if (selectedFilingId === filingId) {
+      setSelectedFilingId(nextFilings[nextFilings.length - 1].id);
+    }
+  };
+
+  const handleMarkReady = (filingId, ready) => {
+    setFilings(prev => prev.map(f => f.id === filingId ? { ...f, markedReady: !!ready } : f));
+  };
+
   const updateNovelty = (u) => {
     setData({ ...data, ...u });
   };
@@ -1065,35 +1547,87 @@ function DraftingSection({ project, data, setData, handle, userId }) {
 
   const hideChatInput = !!editingCapture;
 
+  const descCount = captures.filter(c => c.type === "description_block").length;
+  const claimCount = captures.filter(c => c.type === "claim").length;
+  const canGenerate = descCount >= 1 && claimCount >= 1;
+
   return (
     <div style={pg.twoCol}>
       <div style={pg.leftCol}>
-        <ChatThread
-          messages={visibleMessages}
-          loading={loading}
-          onSend={sendMessage}
-          placeholder={currentPhase === "describe" ? "Describe how your invention works…" : "React to the draft claims or ask for revisions…"}
-          inlineActions={adjustedActions}
-          hideInput={hideChatInput}
-          onUploadImage={handleUploadImage}
-          uploadEnabled={true}
-        />
+        <div style={tabs.bar}>
+          <button
+            onClick={() => setActiveTab("chat")}
+            style={{ ...tabs.tab, ...(activeTab === "chat" ? tabs.tabActive : {}) }}
+          >
+            Chat
+          </button>
+          <button
+            onClick={() => setActiveTab("filings")}
+            style={{ ...tabs.tab, ...(activeTab === "filings" ? tabs.tabActive : {}) }}
+          >
+            Filing Drafts {filings.length > 0 && <span style={tabs.count}>({filings.length})</span>}
+          </button>
+        </div>
 
-        {editingCapture && (
-          <CaptureEditPanel
-            capture={editingCapture}
-            onSave={handleSaveEdit}
-            onCancel={() => setEC(null)}
+        {activeTab === "chat" ? (
+          <>
+            <ChatThread
+              messages={visibleMessages}
+              loading={loading}
+              onSend={sendMessage}
+              placeholder={currentPhase === "describe" ? "Describe how your invention works…" : "React to the draft claims or ask for revisions…"}
+              inlineActions={adjustedActions}
+              hideInput={hideChatInput}
+              onUploadImage={handleUploadImage}
+              uploadEnabled={true}
+            />
+
+            {editingCapture && (
+              <CaptureEditPanel
+                capture={editingCapture}
+                onSave={handleSaveEdit}
+                onCancel={() => setEC(null)}
+              />
+            )}
+
+            <NoveltyAdvisor
+              captures={captures}
+              savedScore={data.noveltyScore}
+              savedAssessment={data.noveltyAssessment}
+              savedThread={data.noveltyThread}
+              onSave={updateNovelty}
+            />
+
+            {canGenerate && filings.length === 0 && (
+              <div style={pg.generateBar}>
+                <p style={pg.generateText}>
+                  Ready to see your provisional take shape? Generate <strong>Filing Draft v1</strong> — a complete USPTO-structured application drawn from your work so far. You'll likely make several drafts as you refine.
+                </p>
+                <button
+                  onClick={handleGenerateFiling}
+                  disabled={generating}
+                  style={{ ...pg.generateBtn, opacity: generating ? 0.6 : 1 }}
+                >
+                  {generating ? "Generating Filing Draft v1…" : "Generate Filing Draft v1 →"}
+                </button>
+              </div>
+            )}
+          </>
+        ) : (
+          <FilingsView
+            project={project}
+            handle={handle}
+            filings={filings}
+            selectedFilingId={selectedFilingId || (filings.length > 0 ? filings[filings.length - 1].id : null)}
+            setSelectedFilingId={setSelectedFilingId}
+            captures={captures}
+            onGenerateFiling={handleGenerateFiling}
+            onRenameFiling={handleRenameFiling}
+            onDeleteFiling={handleDeleteFiling}
+            onMarkReady={handleMarkReady}
+            generating={generating}
           />
         )}
-
-        <NoveltyAdvisor
-          captures={captures}
-          savedScore={data.noveltyScore}
-          savedAssessment={data.noveltyAssessment}
-          savedThread={data.noveltyThread}
-          onSave={updateNovelty}
-        />
       </div>
 
       <div style={pg.rightCol}>
@@ -1113,6 +1647,64 @@ function DraftingSection({ project, data, setData, handle, userId }) {
           onCancel={() => setDC(null)}
         />
       )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FILINGS SECTION (standalone view for section 4)
+// ─────────────────────────────────────────────────────────────────────────────
+function FilingsSection({ project, data, setData, handle }) {
+  const filings = data.filings || [];
+  const captures = data.captures || [];
+  const [selectedFilingId, setSelectedFilingId] = useState(data.selectedFilingId || null);
+
+  useEffect(() => {
+    if (selectedFilingId !== data.selectedFilingId) {
+      setData({ ...data, selectedFilingId });
+    }
+  }, [selectedFilingId]);
+
+  const handleRenameFiling = (filingId, newLabel) => {
+    const next = filings.map(f => f.id === filingId ? { ...f, label: newLabel } : f);
+    setData({ ...data, filings: next });
+  };
+
+  const handleDeleteFiling = (filingId) => {
+    if (filings.length <= 1) {
+      alert("Can't delete the only filing draft.");
+      return;
+    }
+    if (!confirm("Delete this filing draft? This cannot be undone.")) return;
+    const next = filings.filter(f => f.id !== filingId);
+    setData({ ...data, filings: next, selectedFilingId: selectedFilingId === filingId ? next[next.length - 1].id : selectedFilingId });
+  };
+
+  const handleMarkReady = (filingId, ready) => {
+    const next = filings.map(f => f.id === filingId ? { ...f, markedReady: !!ready } : f);
+    setData({ ...data, filings: next });
+  };
+
+  return (
+    <div style={ps.content}>
+      <h2 style={ps.title}>Filing Drafts</h2>
+      <p style={ps.desc}>
+        Each Filing Draft is a complete USPTO-structured provisional patent application synthesized from your captures.
+        To generate a draft (or generate a new version), return to the Drafting section.
+      </p>
+      <FilingsView
+        project={project}
+        handle={handle}
+        filings={filings}
+        selectedFilingId={selectedFilingId || (filings.length > 0 ? filings[filings.length - 1].id : null)}
+        setSelectedFilingId={setSelectedFilingId}
+        captures={captures}
+        onGenerateFiling={() => alert("Return to the Drafting section to generate a new filing draft.")}
+        onRenameFiling={handleRenameFiling}
+        onDeleteFiling={handleDeleteFiling}
+        onMarkReady={handleMarkReady}
+        generating={false}
+      />
     </div>
   );
 }
@@ -1181,16 +1773,13 @@ function BrainstormImportPicker({ onImport }) {
       {open && (
         <div style={imp.panel}>
           <p style={imp.constraint}>
-            Patent Forge imports the <strong>latest brief</strong> from each Brainstorm project, along with any images you uploaded during that session.
-            To use an older version, open the project in Brainstorm first and re-synthesize from
-            the captures you want — that version becomes the new latest.
+            Patent Forge imports the <strong>latest brief</strong> from each Brainstorm project, along with any images you uploaded.
+            To use an older version, open the project in Brainstorm first and re-synthesize.
           </p>
           {loading && <p style={imp.loadingMsg}>Loading your Brainstorm projects…</p>}
-          {importing && <p style={imp.loadingMsg}>Importing brief and copying images — this can take a few seconds…</p>}
+          {importing && <p style={imp.loadingMsg}>Importing brief and copying images…</p>}
           {!loading && fetched && brainstormProjects.length === 0 && (
-            <p style={imp.emptyMsg}>
-              No Brainstorm projects yet. Start one in Brainstorm first, then come back here to import.
-            </p>
+            <p style={imp.emptyMsg}>No Brainstorm projects yet.</p>
           )}
           {!loading && brainstormProjects.length > 0 && (
             <div style={imp.list}>
@@ -1217,7 +1806,7 @@ function BrainstormImportPicker({ onImport }) {
                         </div>
                       </div>
                       {hasBrief ? (
-                        <button onClick={() => handlePick(p)} disabled={importing} style={{ ...imp.useBtn, opacity: importing ? 0.5 : 1, cursor: importing ? "not-allowed" : "pointer" }}>
+                        <button onClick={() => handlePick(p)} disabled={importing} style={{ ...imp.useBtn, opacity: importing ? 0.5 : 1 }}>
                           Use this →
                         </button>
                       ) : (
@@ -1226,9 +1815,7 @@ function BrainstormImportPicker({ onImport }) {
                     </div>
                     {!hasBrief && (
                       <p style={imp.rowInstruction}>
-                        No brief synthesized yet for this project. Open it in Brainstorm and click
-                        "Generate Invention Brief" (or "Synthesize new version" if you've already started).
-                        Then come back here.
+                        Open it in Brainstorm and generate a brief first, then come back here.
                       </p>
                     )}
                   </div>
@@ -1246,9 +1833,23 @@ function BrainstormImportPicker({ onImport }) {
 // PROJECT DASHBOARD
 // ─────────────────────────────────────────────────────────────────────────────
 function ProjectDashboard({ onNew, onResume, onSignOut, handle, isFirstTimeUser, userId }) {
-  const [projects, setProjects] = useState([]); const [newName, setNewName] = useState(""); const [loading, setLoading] = useState(true); const [handoff, setHandoff] = useState(null); const [processingHandoff, setProcessingHandoff] = useState(false);
-  useEffect(() => { fetchProjects(); try { const h = localStorage.getItem(HANDOFF_KEY); if (h) setHandoff(JSON.parse(h)); } catch {} }, []);
-  const fetchProjects = async () => { setLoading(true); const { data } = await supabase.from(TABLE).select("*").order("updated_at", { ascending: false }); setProjects(data || []); setLoading(false); };
+  const [projects, setProjects] = useState([]);
+  const [newName, setNewName] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [handoff, setHandoff] = useState(null);
+  const [processingHandoff, setProcessingHandoff] = useState(false);
+
+  useEffect(() => {
+    fetchProjects();
+    try { const h = localStorage.getItem(HANDOFF_KEY); if (h) setHandoff(JSON.parse(h)); } catch {}
+  }, []);
+
+  const fetchProjects = async () => {
+    setLoading(true);
+    const { data } = await supabase.from(TABLE).select("*").order("updated_at", { ascending: false });
+    setProjects(data || []);
+    setLoading(false);
+  };
 
   const handleHandoff = async () => {
     if (!handoff || processingHandoff) return;
@@ -1293,7 +1894,14 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle, isFirstTimeUser,
     }
   };
 
-  const handleNew = async () => { const name = newName.trim() || `Patent Application — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`; const { data: { user } } = await supabase.auth.getUser(); const project = { id: genId(), user_id: user.id, name, section: 0, data: {} }; await supabase.from(TABLE).insert(project); setNewName(""); onNew(project); };
+  const handleNew = async () => {
+    const name = newName.trim() || `Patent Application — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+    const { data: { user } } = await supabase.auth.getUser();
+    const project = { id: genId(), user_id: user.id, name, section: 0, data: {} };
+    await supabase.from(TABLE).insert(project);
+    setNewName("");
+    onNew(project);
+  };
 
   const handleImportFromBrainstorm = async (imported) => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -1343,7 +1951,7 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle, isFirstTimeUser,
           <div style={wb.icon}>👋</div>
           <div style={wb.body}>
             <div style={wb.title}>Welcome to Patent Forge, {handle}.</div>
-            <div style={wb.text}>Ready to draft your first provisional patent application? Start a new project below — you'll walk through each section with AI guidance, save automatically, and end up with a USPTO-ready filing package.</div>
+            <div style={wb.text}>Ready to draft your first provisional patent application? Start a new project below — you'll walk through each section with AI guidance, save automatically, and end up with a USPTO-ready filing draft.</div>
           </div>
         </div>
       )}
@@ -1359,7 +1967,7 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle, isFirstTimeUser,
             </div>
           </div>
           <div style={hf.bannerRight}>
-            <button onClick={handleHandoff} disabled={processingHandoff} style={{ ...hf.continueBtn, opacity: processingHandoff ? 0.5 : 1, cursor: processingHandoff ? "not-allowed" : "pointer" }}>
+            <button onClick={handleHandoff} disabled={processingHandoff} style={{ ...hf.continueBtn, opacity: processingHandoff ? 0.5 : 1 }}>
               {processingHandoff ? "Importing…" : "Continue in Patent Forge →"}
             </button>
             <button onClick={() => { try { localStorage.removeItem(HANDOFF_KEY); } catch {} setHandoff(null); }} disabled={processingHandoff} style={hf.dismissBtn}>Dismiss</button>
@@ -1369,14 +1977,35 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle, isFirstTimeUser,
       <div style={db.newRow}><input style={{ ...ps.input, flex: 1, marginTop: 0 }} value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleNew()} placeholder="Name your invention (optional)..." /><button onClick={handleNew} style={ps.nextBtn}>Start New Application →</button></div>
       <BrainstormImportPicker onImport={handleImportFromBrainstorm} />
       {loading && <p style={{ color: theme.textMuted, fontSize: 14 }}>Loading your applications…</p>}
-      {!loading && projects.length > 0 && (<div style={db.list}><p style={db.listHeader}>SAVED APPLICATIONS ({projects.length})</p>{projects.map(p => (<div key={p.id} style={db.card}><div style={db.cardLeft}><div style={db.cardName}>{p.name}{p.data?.fromBrainstorm && <span style={hf.tag}>from Brainstorm</span>}{p.data?.importedBriefVersion && <span style={imp.briefTag}>{p.data.importedBriefVersion}</span>}{Array.isArray(p.data?.importedImages) && p.data.importedImages.length > 0 && <span style={hf.imgTag}>📎 {p.data.importedImages.length}</span>}</div><div style={db.cardMeta}>Last saved {new Date(p.updated_at).toLocaleString()} &nbsp;·&nbsp; Stage: <span style={{ color: theme.red }}>{sl(p.section)}</span></div></div><div style={db.cardRight}><button onClick={() => onResume(p)} style={db.resumeBtn}>Resume →</button><button onClick={() => handleRename(p.id)} style={db.iconBtn} title="Rename">✏</button><button onClick={() => handleDelete(p.id, p.name)} style={db.iconBtn} title="Delete">✕</button></div></div>))}</div>)}
+      {!loading && projects.length > 0 && (<div style={db.list}><p style={db.listHeader}>SAVED APPLICATIONS ({projects.length})</p>{projects.map(p => {
+        const filingCount = Array.isArray(p.data?.filings) ? p.data.filings.length : 0;
+        return (
+          <div key={p.id} style={db.card}>
+            <div style={db.cardLeft}>
+              <div style={db.cardName}>
+                {p.name}
+                {p.data?.fromBrainstorm && <span style={hf.tag}>from Brainstorm</span>}
+                {p.data?.importedBriefVersion && <span style={imp.briefTag}>{p.data.importedBriefVersion}</span>}
+                {Array.isArray(p.data?.importedImages) && p.data.importedImages.length > 0 && <span style={hf.imgTag}>📎 {p.data.importedImages.length}</span>}
+                {filingCount > 0 && <span style={hf.filingsTag}>📄 {filingCount} draft{filingCount === 1 ? "" : "s"}</span>}
+              </div>
+              <div style={db.cardMeta}>Last saved {new Date(p.updated_at).toLocaleString()} &nbsp;·&nbsp; Stage: <span style={{ color: theme.red }}>{sl(p.section)}</span></div>
+            </div>
+            <div style={db.cardRight}>
+              <button onClick={() => onResume(p)} style={db.resumeBtn}>Resume →</button>
+              <button onClick={() => handleRename(p.id)} style={db.iconBtn} title="Rename">✏</button>
+              <button onClick={() => handleDelete(p.id, p.name)} style={db.iconBtn} title="Delete">✕</button>
+            </div>
+          </div>
+        );
+      })}</div>)}
       {!loading && projects.length === 0 && !handoff && <div style={db.empty}>No saved applications yet. Start your first one above.</div>}
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// STATIC SECTIONS (unchanged)
+// STATIC SECTIONS
 // ─────────────────────────────────────────────────────────────────────────────
 function StickyActionBar({ children, justSaved }) {
   return (
@@ -1464,7 +2093,9 @@ function AgreementSection({ data, setData, onNext, hasAgreedBefore, justSaved })
 }
 
 function TitleSection({ data, setData, onNext, justSaved }) {
-  const [title, setTitle] = useState(data.patentTitle || ""); const [field, setField] = useState(data.patentField || ""); const [summary, setSummary] = useState(data.summary || "");
+  const [title, setTitle] = useState(data.patentTitle || "");
+  const [field, setField] = useState(data.patentField || "");
+  const [summary, setSummary] = useState(data.summary || "");
   const canProceed = title.trim() && field.trim() && summary.trim();
   return (
     <div style={ps.content}>
@@ -1544,7 +2175,15 @@ export default function PatentForgePage() {
 
   const handleSetData = (newData) => setData(newData);
   const goNext = () => setSection(s => Math.min(s + 1, SECTIONS.length - 1));
-  const goToSection = (t) => { if (t < section) setSection(t); };
+  const goToSection = (t) => {
+    const filings = Array.isArray(data.filings) ? data.filings : [];
+    const canVisitFilings = filings.length > 0;
+    if (t === 4 && !canVisitFilings) {
+      alert("Generate your first Filing Draft from the Drafting section, then this section becomes available.");
+      return;
+    }
+    if (t < section || (t === 4 && canVisitFilings)) setSection(t);
+  };
   const handleNew = (proj) => { setProject(proj); setSection(proj.section || 0); setData(proj.data || {}); setView("session"); };
   const handleResume = (proj) => { setProject(proj); setSection(proj.section || 0); setData(proj.data || {}); setView("session"); };
   const handleDashboard = async () => { if (project) await supabase.from(TABLE).update({ section, data, updated_at: new Date().toISOString() }).eq("id", project.id); setView("dashboard"); setProject(null); setSection(0); setData({}); };
@@ -1567,6 +2206,9 @@ export default function PatentForgePage() {
     );
   }
 
+  const filings = Array.isArray(data.filings) ? data.filings : [];
+  const filingsAvailable = filings.length > 0;
+
   return (
     <Layout title="Patent Forge" logoSrc="/patentforge-logo.png">
       <div style={styles.header}><p style={styles.label}>PATENT FORGE</p><h1 style={styles.heading}>Draft Your Provisional Patent</h1></div>
@@ -1581,10 +2223,25 @@ export default function PatentForgePage() {
       </div>
       <div style={styles.sections}>
         {SECTIONS.map((s, i) => {
-          const isActive = i === section, isCompleted = i < section;
+          const isActive = i === section;
+          const isCompleted = i < section;
+          const isFilings = i === 4;
+          const filingsLocked = isFilings && !filingsAvailable;
+          const clickable = isCompleted || (isFilings && filingsAvailable);
           return (
             <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <div onClick={() => isCompleted && goToSection(i)} title={isCompleted ? `Return to ${s.label}` : undefined} style={{ ...styles.sectionChip, background: isActive ? theme.red : isCompleted ? theme.surfaceAlt : "transparent", borderColor: isActive || isCompleted ? theme.red : theme.border, color: isActive ? "#fff" : isCompleted ? theme.textMuted : theme.textDim, cursor: isCompleted ? "pointer" : "default" }}>
+              <div
+                onClick={() => clickable && goToSection(i)}
+                title={filingsLocked ? "Generate your first Filing Draft from the Drafting section to unlock this." : (clickable ? `Go to ${s.label}` : undefined)}
+                style={{
+                  ...styles.sectionChip,
+                  background: isActive ? theme.red : isCompleted ? theme.surfaceAlt : "transparent",
+                  borderColor: isActive || isCompleted ? theme.red : (filingsLocked ? theme.border : theme.border),
+                  color: isActive ? "#fff" : isCompleted ? theme.textMuted : (filingsLocked ? theme.textDim : theme.textDim),
+                  cursor: clickable ? "pointer" : "default",
+                  opacity: filingsLocked ? 0.5 : 1,
+                }}
+              >
                 {isCompleted && <span style={{ marginRight: 3, fontSize: 9 }}>✓</span>}{s.icon} {s.label}
               </div>
               {i < SECTIONS.length - 1 && <span style={{ color: theme.textDim, fontSize: 10 }}>›</span>}
@@ -1596,6 +2253,7 @@ export default function PatentForgePage() {
       {section === 1 && <AgreementSection   data={data} setData={handleSetData} onNext={goNext} hasAgreedBefore={hasAgreedBefore} justSaved={justSaved} />}
       {section === 2 && <TitleSection       data={data} setData={handleSetData} onNext={goNext} justSaved={justSaved} />}
       {section === 3 && <DraftingSection    project={project} data={data} setData={handleSetData} handle={handle} userId={user?.id} />}
+      {section === 4 && <FilingsSection     project={project} data={data} setData={handleSetData} handle={handle} />}
     </Layout>
   );
 }
@@ -1614,6 +2272,15 @@ const pg = {
   twoCol: { display: "flex", gap: 20, height: "calc(100vh - 240px)", minHeight: 500 },
   leftCol: { flex: 1, minWidth: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 16, paddingRight: 4 },
   rightCol: { width: 320, flexShrink: 0, overflowY: "auto", paddingLeft: 4 },
+  generateBar: { background: theme.surface, border: `1px solid ${theme.red}`, borderRadius: 10, padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" },
+  generateText: { fontSize: 13, color: theme.textMuted, margin: 0, lineHeight: 1.6, flex: 1, minWidth: 240 },
+  generateBtn: { background: theme.red, border: "none", borderRadius: 7, color: "#fff", padding: "10px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", whiteSpace: "nowrap" },
+};
+const tabs = {
+  bar: { display: "flex", gap: 4, padding: "8px 0 0", borderBottom: `1px solid ${theme.border}`, marginBottom: 8 },
+  tab: { background: "transparent", border: "none", color: theme.textMuted, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", borderBottom: "2px solid transparent" },
+  tabActive: { color: theme.red, borderBottom: `2px solid ${theme.red}` },
+  count: { color: theme.textDim, fontWeight: 500, marginLeft: 4 },
 };
 const sb = {
   wrap: { display: "flex", flexDirection: "column", gap: 20 },
@@ -1657,6 +2324,41 @@ const dm = {
   row: { display: "flex", gap: 10, marginTop: 16 },
   deleteBtn: { background: theme.red, border: "none", borderRadius: 6, color: "#fff", padding: "8px 16px", fontSize: 13, fontWeight: 700, fontFamily: "'DM Sans', sans-serif" },
   cancelBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+};
+const fv = {
+  wrap: { padding: "12px 0 24px" },
+  emptyCard: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 28, textAlign: "center" },
+  emptyTitle: { fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 700, color: theme.text, marginBottom: 12, marginTop: 0 },
+  emptyText: { fontSize: 14, color: theme.textMuted, lineHeight: 1.7, marginBottom: 14 },
+  generateBtn: { background: theme.red, border: "none", borderRadius: 8, color: "#fff", padding: "12px 24px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", marginTop: 8 },
+  header: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 16, flexWrap: "wrap" },
+  headerLeft: { flex: 1, minWidth: 240 },
+  titleRow: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  title: { fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 700, color: theme.text, margin: 0 },
+  renameBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "4px 8px", fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  readyBadge: { background: "#1a3a1a", color: "#80ff99", borderRadius: 4, padding: "3px 8px", fontSize: 9, fontWeight: 700, letterSpacing: 1.5, border: "1px solid #2a5a2a" },
+  labelEditRow: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" },
+  labelInput: { background: theme.surface, border: `1px solid ${theme.red}`, borderRadius: 6, color: theme.text, padding: "6px 10px", fontSize: 16, fontFamily: "'DM Sans', sans-serif", outline: "none", minWidth: 220 },
+  labelBtn: { background: theme.red, border: "none", borderRadius: 6, color: "#fff", padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  labelBtnGhost: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  meta: { fontSize: 12, color: theme.textDim, margin: 0, marginTop: 4 },
+  latestTag: { background: theme.red, color: "#fff", borderRadius: 4, padding: "2px 6px", fontSize: 9, fontWeight: 700, marginLeft: 8, letterSpacing: 1 },
+  versionSelect: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 7, color: theme.text, padding: "7px 10px", fontSize: 12, fontFamily: "'DM Sans', sans-serif", outline: "none" },
+  staleNotice: { background: "#2a2419", border: "1px solid #4a4019", borderRadius: 8, color: "#d4b87a", padding: "12px 16px", fontSize: 13, lineHeight: 1.6, marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" },
+  staleBtn: { background: theme.red, border: "none", borderRadius: 7, color: "#fff", padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  card: { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 24, marginBottom: 16, maxHeight: "calc(100vh - 480px)", overflowY: "auto" },
+  text: { fontSize: 13, lineHeight: 1.7, color: "#ccc", fontFamily: "'DM Sans', monospace", whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 },
+  actions: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 },
+  copyBtn: { padding: "10px 18px", background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.textMuted, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  downloadBtn: { padding: "10px 18px", background: theme.red, border: "none", borderRadius: 8, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  readyBtn: { padding: "10px 16px", background: "transparent", border: "1px solid #80ff99", borderRadius: 8, color: "#80ff99", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  readyBtnUnmark: { padding: "10px 16px", background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.textDim, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  deleteBtn: { padding: "10px 14px", background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.textDim, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  regenBar: { background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" },
+  regenText: { fontSize: 12, color: theme.textMuted, margin: 0, flex: 1, minWidth: 220 },
+  regenBtn: { background: theme.red, border: "none", borderRadius: 7, color: "#fff", padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", whiteSpace: "nowrap" },
+  viewingOlderNote: { fontSize: 12, color: theme.textDim, marginTop: 16, fontStyle: "italic" },
+  linkBtn: { background: "transparent", border: "none", color: theme.red, fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0, fontFamily: "'DM Sans', sans-serif", textDecoration: "underline" },
 };
 const ps = {
   content:  { marginTop: 8 },
@@ -1754,6 +2456,7 @@ const hf = {
   infoBar: { background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: theme.textMuted },
   tag: { background: theme.red, color: "#fff", borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700, marginLeft: 8, verticalAlign: "middle" },
   imgTag: { background: theme.surfaceAlt, color: theme.textMuted, borderRadius: 4, padding: "2px 6px", fontSize: 10, fontWeight: 600, marginLeft: 6, border: `1px solid ${theme.border}` },
+  filingsTag: { background: "#1a3a1a", color: "#80ff99", borderRadius: 4, padding: "2px 6px", fontSize: 10, fontWeight: 600, marginLeft: 6, border: "1px solid #2a5a2a" },
 };
 const na = {
   wrap:        { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 10, overflow: "hidden" },
