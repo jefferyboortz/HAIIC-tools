@@ -1,7 +1,3 @@
-import Anthropic from "@anthropic-ai/sdk";
-
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
 async function urlToBase64(url) {
   try {
     const res = await fetch(url);
@@ -17,12 +13,10 @@ async function urlToBase64(url) {
 }
 
 async function buildMessageContent(message) {
-  // If no attachments, return content as plain string (backward compatible)
   if (!message.attachments || message.attachments.length === 0) {
     return message.content;
   }
 
-  // Build array of content blocks: images first, then text
   const blocks = [];
 
   for (const att of message.attachments) {
@@ -62,7 +56,6 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "messages must be an array" });
     }
 
-    // Process messages, converting attachments to image content blocks
     const processedMessages = await Promise.all(
       messages.map(async (m) => ({
         role: m.role,
@@ -70,16 +63,40 @@ export default async function handler(req, res) {
       }))
     );
 
-    const response = await client.messages.create({
+    const requestBody = {
       model: "claude-sonnet-4-20250514",
       max_tokens: max_tokens || 1000,
-      system: system || undefined,
       messages: processedMessages,
+    };
+
+    if (system) {
+      requestBody.system = system;
+    }
+
+    const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify(requestBody),
     });
 
+    if (!apiRes.ok) {
+      const errorText = await apiRes.text();
+      console.error("Anthropic API error:", apiRes.status, errorText);
+      return res.status(apiRes.status).json({
+        error: "Anthropic API error",
+        status: apiRes.status,
+        details: errorText,
+      });
+    }
+
+    const response = await apiRes.json();
     return res.status(200).json(response);
   } catch (err) {
-    console.error("Anthropic API error:", err);
+    console.error("Server error:", err);
     return res.status(500).json({
       error: "API call failed",
       details: err.message,
