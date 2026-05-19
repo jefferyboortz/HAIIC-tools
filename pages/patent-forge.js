@@ -5,20 +5,17 @@ import Layout from "../components/Layout";
 import ChatThread from "../components/ChatThread";
 import theme from "../components/theme";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CONSTANTS
-// ─────────────────────────────────────────────────────────────────────────────
 const SECTIONS = [
   { id: "inventor",   label: "Inventor Info",  icon: "①" },
   { id: "agreement",  label: "Our Vision",     icon: "②" },
   { id: "title",      label: "Title & Field",  icon: "③" },
   { id: "drafting",   label: "Drafting",       icon: "④" },
-  // Filing Package chip is hidden in Push 2a; restored in Push 2b
 ];
 
 const HANDOFF_KEY    = "haiic_pf_handoff";
 const TABLE          = "patent_projects";
 const BRAINSTORM_TBL = "brainstorm_projects";
+const UPLOAD_BUCKET  = "inventor-uploads";
 
 const PHASES = ["describe", "claim"];
 const PHASE_LABELS = { describe: "Describe", claim: "Claim" };
@@ -38,6 +35,50 @@ function briefDisplayName(brief) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// IMAGE UPLOAD HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+async function uploadImageToBucket(file, userId, projectId) {
+  const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const imageId = genId();
+  const storagePath = `${userId}/${projectId}/${imageId}.${ext}`;
+
+  const { error } = await supabase.storage
+    .from(UPLOAD_BUCKET)
+    .upload(storagePath, file, {
+      cacheControl: "3600",
+      upsert: false,
+      contentType: file.type,
+    });
+
+  if (error) {
+    console.error("Storage upload error:", error);
+    throw error;
+  }
+
+  const { data, error: signError } = await supabase.storage
+    .from(UPLOAD_BUCKET)
+    .createSignedUrl(storagePath, 60 * 60); // 1 hour for display
+
+  if (signError) {
+    console.error("Sign URL error:", signError);
+    throw signError;
+  }
+
+  return { storagePath, displayUrl: data.signedUrl };
+}
+
+async function freshSignedUrl(storagePath, expirySeconds = 60 * 60) {
+  const { data, error } = await supabase.storage
+    .from(UPLOAD_BUCKET)
+    .createSignedUrl(storagePath, expirySeconds);
+  if (error || !data?.signedUrl) {
+    console.error("Failed to generate signed URL:", storagePath, error);
+    return null;
+  }
+  return data.signedUrl;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SYSTEM PROMPTS
 // ─────────────────────────────────────────────────────────────────────────────
 function buildDraftingSystemPrompt({ project, captures, currentPhase, fromBrainstorm, brainstormBrief }) {
@@ -47,51 +88,64 @@ function buildDraftingSystemPrompt({ project, captures, currentPhase, fromBrains
   const summary = data.summary || "";
   const inventor = data.inventorName || "the inventor";
 
-  const descBlocks = captures.filter(c => c.type === "description_block" && c.approved);
+  const descBlocks = captures.filter(c => c.type === "description_block");
   const claimables = captures.filter(c => c.type === "claimable_concept");
-  const drafted = captures.filter(c => c.type === "claim" && c.approved);
+  const drafted = captures.filter(c => c.type === "claim");
 
   const phaseGuide = currentPhase === "describe"
     ? `YOU ARE IN THE DESCRIBE PHASE.
 - Help ${inventor} walk through how the invention works in detail.
 - Ask follow-up questions about components, mechanisms, materials, alternative embodiments.
-- When you have enough material for a coherent description chunk (e.g., a component, a mechanism, an embodiment), propose a description capture using the [CAPTURE_PROPOSED] marker described below.
-- When you notice something that looks potentially claimable — a novel mechanism, a unique combination, a non-obvious method — note it inline conversationally AND silently capture it using the [CLAIMABLE_NOTED] marker.
+- When you have enough material for a coherent description chunk (a component, a mechanism, an embodiment), CAPTURE IT SILENTLY using [CAPTURE_PROPOSED] with type "description_block". Then mention it conversationally in your reply: "I captured that as a description block: '...'" — explicit and brief.
+- When you notice something potentially claimable, CAPTURE IT SILENTLY using [CLAIMABLE_NOTED]. Mention it explicitly: "I noted that as a claimable concept: '...'"
 - Do NOT draft claims in this phase. Claim drafting happens in the next phase.
-- When the conversation has produced substantial description blocks AND multiple claimable concepts (typically 3+ description blocks and 2+ claimable concepts), suggest moving to the claim phase.`
+- Do NOT ask the user for approval before capturing — captures auto-save and the user reviews them in the sidebar at their own pace.
+- The user can move to the claim phase using the button in the sidebar. You don't need to prompt them about it; let the work guide the timing.`
     : `YOU ARE IN THE CLAIM PHASE.
-- The describe phase is complete. You have ${descBlocks.length} approved description blocks and ${claimables.length} claimable concepts to work from.
+- The describe phase is complete. You have ${descBlocks.length} description blocks and ${claimables.length} claimable concepts to work from.
 - Your job is to draft claims for ${inventor}. ${inventor} is not a patent attorney and does not know the difference between independent and dependent claims — handle the structure for them.
 - Draft a complete set of claims: one broad independent claim that captures the core invention, then 2-4 dependent claims that narrow it usefully.
-- Propose each claim as a capture using the [CAPTURE_PROPOSED] marker with type "claim". Include both formal patent language AND a plain-English version of each claim.
-- After drafting, invite ${inventor} to react. Help them refine specific claims based on their feedback.
+- CAPTURE EACH CLAIM SILENTLY using [CAPTURE_PROPOSED] with type "claim". Title format: "Claim 1", "Claim 2", etc. Content should include both formal patent language AND a plain-English version.
+- Mention each capture conversationally: "I drafted Claim 1 — it covers the core mechanism in broad terms."
+- After drafting, invite ${inventor} to react. Help them refine specific claims based on their feedback (they can edit any claim from the sidebar).
 - Do NOT propose new description_block or claimable_concept captures in this phase.`;
+
+  const imageGuide = `
+HANDLING IMAGE ATTACHMENTS
+
+The inventor may attach images (sketches, photos, diagrams). When you receive an image:
+
+1. ALWAYS acknowledge what you see explicitly before doing anything else. Describe the image in plain language: "I see a side-view sketch showing a cylindrical housing with what looks like an impeller inside. There's a curved arrow suggesting rotation, and three small marks on the perimeter — possibly inlet ports. Is that right?" This catches misinterpretations early.
+
+2. INCORPORATE the image into your understanding. When you later propose a description_block, reference what you saw: "The impeller comprises three radial blades arranged around a central hub, as shown in the user's sketch."
+
+3. FLAG CLAIMABLE FEATURES visible only in the image. Sometimes the image reveals details the inventor didn't articulate. If you see something potentially claimable — an angle, a spacing, an arrangement — note it as a claimable concept even if the user didn't mention it. Be explicit: "I noticed the blades appear angled in your sketch — is that pitch important to how it works? If so, I'm noting it as a claimable concept."
+
+4. ASK CLARIFYING QUESTIONS when the image is ambiguous. Don't guess at unlabeled parts. Don't assume scale. Don't infer materials. Ask.`;
 
   const captureGuide = `
 CAPTURE MARKERS
 
-When you want to propose a description block or a claim for approval, use:
 [CAPTURE_PROPOSED]
 {"type":"description_block","title":"...","content":"..."}
 [/CAPTURE_PROPOSED]
 
-For a claim, the title is "Claim N" (you'll be numbering them in order):
+For claims:
 [CAPTURE_PROPOSED]
 {"type":"claim","title":"Claim 1","content":"Formal claim language.\\n\\nPlain English: ..."}
 [/CAPTURE_PROPOSED]
 
-When you notice something claimable mid-conversation, capture it silently with:
+For claimable concepts (describe phase only):
 [CLAIMABLE_NOTED]
 {"title":"...","content":"What makes this potentially claimable: ..."}
 [/CLAIMABLE_NOTED]
 
-Mention the claimable concept conversationally in the same message ("That's interesting — I noted it as a claimable concept for us to come back to"), but the [CLAIMABLE_NOTED] marker captures it silently to the sidebar without interrupting the user.
-
 CRITICAL RULES
-- In the describe phase, ONLY propose description_block captures or note claimable_concept captures. Do NOT propose claim captures in describe phase.
-- In the claim phase, ONLY propose claim captures. Do NOT propose description_block or claimable_concept captures in claim phase.
-- One marker per turn maximum unless the user has explicitly asked for multiple items.
-- Always continue the conversation in natural language alongside any markers.`;
+- In describe phase, ONLY emit description_block or claimable_concept markers. NEVER emit claim markers in describe phase.
+- In claim phase, ONLY emit claim markers. NEVER emit description_block or claimable_concept markers in claim phase.
+- One CAPTURE_PROPOSED marker per turn maximum. CLAIMABLE_NOTED can appear in the same turn as a CAPTURE_PROPOSED.
+- ALWAYS continue the conversation in natural language alongside any markers — the markers are silent metadata; the user only sees your prose.
+- ALWAYS mention each capture explicitly in your prose so the user knows what just happened.`;
 
   const contextBlock = `
 INVENTION CONTEXT
@@ -104,11 +158,11 @@ PRIOR BRAINSTORM BRIEF (for your context, do not quote directly):
 ${brainstormBrief.substring(0, 2000)}` : ""}
 
 CURRENT CAPTURE STATE
-- Approved description blocks: ${descBlocks.length}
+- Description blocks: ${descBlocks.length}
   ${descBlocks.map(c => `  • ${c.title}`).join("\n") || "  (none yet)"}
-- Claimable concepts noted: ${claimables.length}
+- Claimable concepts: ${claimables.length}
   ${claimables.map(c => `  • ${c.title}`).join("\n") || "  (none yet)"}
-- Drafted claims approved: ${drafted.length}`;
+- Drafted claims: ${drafted.length}`;
 
   return `You are a patent drafting collaborator at HAIIC, helping inventors who are NOT patent attorneys draft provisional patent applications. Tone: warm, plain-English, never condescending. Translate jargon. Push for detail that lets someone in the field reproduce the invention. ${inventor} should never need to know terms like "independent claim" vs "dependent claim" — handle the structure for them.
 
@@ -116,13 +170,15 @@ ${contextBlock}
 
 ${phaseGuide}
 
+${imageGuide}
+
 ${captureGuide}`;
 }
 
 function buildNoveltyPrompt(captures) {
-  const descBlocks = captures.filter(c => c.type === "description_block" && c.approved);
+  const descBlocks = captures.filter(c => c.type === "description_block");
   const claimables = captures.filter(c => c.type === "claimable_concept");
-  const claims = captures.filter(c => c.type === "claim" && c.approved);
+  const claims = captures.filter(c => c.type === "claim");
 
   return `You are a knowledgeable friend who has been through the patent process. Give an honest, plain-English read on novelty and patentability based on what the inventor has captured so far.
 
@@ -215,7 +271,7 @@ function PatentForgeSidebar({ captures, currentPhase, onEditCapture, onDeleteCap
   };
 
   const canAdvance = currentPhase === "describe"
-    && grouped.description_block.filter(c => c.approved).length >= 2
+    && grouped.description_block.length >= 2
     && grouped.claimable_concept.length >= 1;
 
   return (
@@ -271,9 +327,6 @@ function PatentForgeSidebar({ captures, currentPhase, onEditCapture, onDeleteCap
                       </div>
                     </div>
                     <div style={sb.cardContent}>{c.content.substring(0, 140)}{c.content.length > 140 ? "…" : ""}</div>
-                    {!c.approved && type !== "claimable_concept" && (
-                      <div style={sb.pendingTag}>Pending approval</div>
-                    )}
                   </div>
                 ))}
               </div>
@@ -291,8 +344,7 @@ function PatentForgeSidebar({ captures, currentPhase, onEditCapture, onDeleteCap
 function NoveltyAdvisor({ captures, savedScore, savedAssessment, savedThread, onSave }) {
   const [open, setOpen]               = useState(false);
   const [score, setScore]             = useState(savedScore ?? 1);
-  const [prevScore, setPrevScore]     = useState(savedScore ?? 1);
-  const [direction, setDirection]     = useState(null); // "up" | "down" | null
+  const [direction, setDirection]     = useState(null);
   const [assessment, setAssessment]   = useState(savedAssessment || "");
   const [thread, setThread]           = useState(savedThread || []);
   const [loading, setLoading]         = useState(false);
@@ -300,11 +352,10 @@ function NoveltyAdvisor({ captures, savedScore, savedAssessment, savedThread, on
   const debounceRef                   = useRef(null);
   const lastCapturesHashRef           = useRef("");
 
-  // Watch captures and re-score in the background, debounced
   useEffect(() => {
-    const capturesHash = JSON.stringify(captures.map(c => ({ id: c.id, content: c.content, approved: c.approved })));
+    const capturesHash = JSON.stringify(captures.map(c => ({ id: c.id, content: c.content })));
     if (capturesHash === lastCapturesHashRef.current) return;
-    if (captures.length === 0) return; // No captures yet, stay at initial score
+    if (captures.length === 0) return;
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
@@ -334,7 +385,6 @@ function NoveltyAdvisor({ captures, savedScore, savedAssessment, savedThread, on
       const newAssessment = stripScore(text);
       const newThread = [{ role: "assistant", content: newAssessment }];
 
-      setPrevScore(score);
       if (newScore > score) setDirection("up");
       else if (newScore < score) setDirection("down");
       else setDirection(null);
@@ -344,7 +394,6 @@ function NoveltyAdvisor({ captures, savedScore, savedAssessment, savedThread, on
       setThread(newThread);
       onSave({ noveltyScore: newScore, noveltyAssessment: newAssessment, noveltyThread: newThread });
 
-      // Clear direction indicator after 3 seconds
       setTimeout(() => setDirection(null), 3000);
     } catch {} finally {
       setLoading(false);
@@ -588,17 +637,41 @@ function TypedDeleteModal({ capture, onConfirm, onCancel }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DRAFTING SECTION (unified chat replacing Description + Claims)
+// DRAFTING SECTION
 // ─────────────────────────────────────────────────────────────────────────────
-function DraftingSection({ project, data, setData, handle }) {
+function DraftingSection({ project, data, setData, handle, userId }) {
   const [messages, setMessages]           = useState(data.messages || []);
   const [captures, setCaptures]           = useState(data.captures || []);
   const [currentPhase, setCurrentPhase]   = useState(data.currentPhase || "describe");
-  const [pendingProposal, setPP]          = useState(null);
   const [editingCapture, setEC]           = useState(null);
   const [deletingCapture, setDC]          = useState(null);
   const [loading, setLoading]             = useState(false);
+  const [signedUrlCache, setSUC]          = useState({});
   const initialized                       = useRef(false);
+
+  // Hydrate signed URLs for any messages that have attachments with stale URLs
+  useEffect(() => {
+    const hydrate = async () => {
+      const toFetch = [];
+      messages.forEach(m => {
+        if (Array.isArray(m.attachments)) {
+          m.attachments.forEach(att => {
+            if (att.storagePath && !signedUrlCache[att.storagePath]) {
+              toFetch.push(att.storagePath);
+            }
+          });
+        }
+      });
+      if (toFetch.length === 0) return;
+      const fresh = {};
+      for (const sp of toFetch) {
+        const url = await freshSignedUrl(sp);
+        if (url) fresh[sp] = url;
+      }
+      if (Object.keys(fresh).length > 0) setSUC(c => ({ ...c, ...fresh }));
+    };
+    hydrate();
+  }, [messages]);
 
   // Bootstrap opener on first entry
   useEffect(() => {
@@ -608,8 +681,8 @@ function DraftingSection({ project, data, setData, handle }) {
 
     const fromBrainstorm = !!data.fromBrainstorm;
     const opener = fromBrainstorm
-      ? `Let's draft your provisional patent for **${data.patentTitle || "this invention"}**. Here's how this works: we'll build on the Brainstorm work you already did — I have your Invention Brief in front of me — and develop it into something detailed enough to file. As we talk, I'll capture pieces of the description and flag concepts that look potentially claimable. You'll see those building up in the sidebar to the right. When you're ready, we'll move to drafting the claims.\n\nTo start: looking back at your Brainstorm work, are there any refinements or new ideas that have come to mind since you wrote the brief? Or anything you want to sharpen before we go further?`
-      : `Let's draft your provisional patent for **${data.patentTitle || "this invention"}**. Here's how this works: we'll talk through your invention in your own words — I'll ask questions to make sure I understand it, and as we go I'll capture pieces of the description and flag concepts that look potentially claimable. You'll see those building up in the sidebar to the right. When you're ready, we'll move to drafting the claims.\n\nTo start: tell me about your invention. What does it do, and what problem does it solve?`;
+      ? `Let's draft your provisional patent for **${data.patentTitle || "this invention"}**. Here's how this works: we'll build on the Brainstorm work you already did — I have your Invention Brief in front of me — and develop it into something detailed enough to file. As we talk, I'll capture pieces of the description and flag concepts that look potentially claimable. You'll see those building up in the sidebar to the right. When you're ready, we'll move to drafting the claims.\n\nYou can attach sketches, photos, or diagrams anytime using the 📎 button — visual thinkers welcome.\n\nTo start: looking back at your Brainstorm work, are there any refinements or new ideas that have come to mind since you wrote the brief? Or anything you want to sharpen before we go further?`
+      : `Let's draft your provisional patent for **${data.patentTitle || "this invention"}**. Here's how this works: we'll talk through your invention in your own words — I'll ask questions to make sure I understand it, and as we go I'll capture pieces of the description and flag concepts that look potentially claimable. You'll see those building up in the sidebar to the right. When you're ready, we'll move to drafting the claims.\n\nYou can attach sketches, photos, or diagrams anytime using the 📎 button — visual thinkers welcome.\n\nTo start: tell me about your invention. What does it do, and what problem does it solve?`;
 
     const openerMsg = {
       id: genId(),
@@ -636,9 +709,46 @@ function DraftingSection({ project, data, setData, handle }) {
     return () => window.removeEventListener("beforeunload", flush);
   }, [messages, captures, currentPhase]);
 
-  const sendMessage = async (text) => {
-    if (!text.trim() || loading) return;
-    const userMsg = { id: genId(), role: "user", content: text, createdAt: new Date().toISOString() };
+  // Apply hydrated signed URLs to messages for display
+  const messagesForDisplay = messages.map(m => {
+    if (!Array.isArray(m.attachments)) return m;
+    return {
+      ...m,
+      attachments: m.attachments.map(att => {
+        if (att.type === "image" && att.storagePath) {
+          return { ...att, displayUrl: signedUrlCache[att.storagePath] || att.displayUrl };
+        }
+        return att;
+      }),
+    };
+  });
+
+  // Upload handler — passed to ChatThread
+  const handleUploadImage = async (file) => {
+    if (!userId || !project?.id) {
+      throw new Error("Missing user or project context");
+    }
+    return await uploadImageToBucket(file, userId, project.id);
+  };
+
+  const sendMessage = async (text, attachment) => {
+    if ((!text || !text.trim()) && !attachment) return;
+    if (loading) return;
+
+    const userMsg = {
+      id: genId(),
+      role: "user",
+      content: text || "",
+      createdAt: new Date().toISOString(),
+    };
+    if (attachment) {
+      userMsg.attachments = [{
+        type: "image",
+        storagePath: attachment.storagePath,
+        displayUrl: attachment.displayUrl,
+        filename: attachment.filename,
+      }];
+    }
     const updated = [...messages, userMsg];
     setMessages(updated);
     setLoading(true);
@@ -652,7 +762,21 @@ function DraftingSection({ project, data, setData, handle }) {
         brainstormBrief: data.brainstormBrief,
       });
 
-      const apiMessages = updated.map(m => ({ role: m.role, content: m.content }));
+      // Build API messages — translate attachments to {url} for the API proxy
+      const apiMessages = await Promise.all(updated.map(async m => {
+        const base = { role: m.role, content: m.content };
+        if (Array.isArray(m.attachments) && m.attachments.length > 0) {
+          const apiAttachments = [];
+          for (const att of m.attachments) {
+            if (att.type === "image" && att.storagePath) {
+              const url = await freshSignedUrl(att.storagePath, 5 * 60); // short-lived for API
+              if (url) apiAttachments.push({ type: "image", url });
+            }
+          }
+          if (apiAttachments.length > 0) base.attachments = apiAttachments;
+        }
+        return base;
+      }));
 
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -679,25 +803,40 @@ function DraftingSection({ project, data, setData, handle }) {
       };
       setMessages(m => [...m, assistantMsg]);
 
-      // Silent claimable captures
-      if (claimables.length > 0 && currentPhase === "describe") {
-        const newCaptures = claimables.map(c => ({
+      // Silent capture: description_block, claim, claimable_concept all auto-save
+      const newCaptures = [];
+
+      validProposals.forEach(p => {
+        newCaptures.push({
           id: genId(),
-          type: "claimable_concept",
-          title: c.title,
-          content: c.content,
-          approved: true, // claimable concepts don't need approval
+          type: p.type,
+          title: p.title,
+          content: p.content,
           createdAt: new Date().toISOString(),
-          sourceMsgIdx: updated.length, // index of assistant message we'll append
-        }));
-        setCaptures(prev => [...prev, ...newCaptures]);
+          sourceMsgIdx: updated.length,
+          sourceImageStoragePath: attachment?.storagePath || null,
+        });
+      });
+
+      if (currentPhase === "describe") {
+        claimables.forEach(c => {
+          newCaptures.push({
+            id: genId(),
+            type: "claimable_concept",
+            title: c.title,
+            content: c.content,
+            createdAt: new Date().toISOString(),
+            sourceMsgIdx: updated.length,
+            sourceImageStoragePath: attachment?.storagePath || null,
+          });
+        });
       }
 
-      // Pending proposal (one at a time)
-      if (validProposals.length > 0) {
-        setPP(validProposals[0]);
+      if (newCaptures.length > 0) {
+        setCaptures(prev => [...prev, ...newCaptures]);
       }
     } catch (err) {
+      console.error("sendMessage error:", err);
       const errorMsg = {
         id: genId(),
         role: "assistant",
@@ -710,46 +849,11 @@ function DraftingSection({ project, data, setData, handle }) {
     }
   };
 
-  const approveProposal = () => {
-    if (!pendingProposal) return;
-    const newCapture = {
-      id: genId(),
-      type: pendingProposal.type,
-      title: pendingProposal.title,
-      content: pendingProposal.content,
-      approved: true,
-      createdAt: new Date().toISOString(),
-      sourceMsgIdx: messages.length - 1,
-    };
-    setCaptures(c => [...c, newCapture]);
-    setPP(null);
-  };
-
-  const rejectProposal = () => setPP(null);
-
-  const editProposal = () => {
-    if (!pendingProposal) return;
-    const newCapture = {
-      id: genId(),
-      type: pendingProposal.type,
-      title: pendingProposal.title,
-      content: pendingProposal.content,
-      approved: false,
-      createdAt: new Date().toISOString(),
-      sourceMsgIdx: messages.length - 1,
-    };
-    setCaptures(c => [...c, newCapture]);
-    setEC(newCapture);
-    setPP(null);
-  };
-
   const handleEditCapture = (cap) => setEC(cap);
-
   const handleSaveEdit = (updated) => {
-    setCaptures(prev => prev.map(c => c.id === updated.id ? { ...updated, approved: true } : c));
+    setCaptures(prev => prev.map(c => c.id === updated.id ? updated : c));
     setEC(null);
   };
-
   const handleDeleteCapture = (cap) => setDC(cap);
   const handleConfirmDelete = () => {
     setCaptures(prev => prev.filter(c => c.id !== deletingCapture.id));
@@ -759,7 +863,6 @@ function DraftingSection({ project, data, setData, handle }) {
   const handlePhaseTransition = async () => {
     if (currentPhase !== "describe") return;
     setCurrentPhase("claim");
-    // Generate a transition opener
     setLoading(true);
     try {
       const system = buildDraftingSystemPrompt({
@@ -774,7 +877,7 @@ function DraftingSection({ project, data, setData, handle }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           system,
-          messages: [{ role: "user", content: "We're moving to the claim phase. Acknowledge the transition briefly, then draft an initial set of claims based on the description blocks and claimable concepts captured. Use the [CAPTURE_PROPOSED] marker for each claim, one at a time, starting with Claim 1 (the broad independent claim)." }],
+          messages: [{ role: "user", content: "We're moving to the claim phase. Acknowledge the transition briefly, then draft Claim 1 (the broad independent claim) using [CAPTURE_PROPOSED] with type 'claim'. Mention it conversationally. Tell the user you'll continue with dependent claims after they see this first one." }],
           max_tokens: 2500,
         }),
       });
@@ -797,7 +900,17 @@ function DraftingSection({ project, data, setData, handle }) {
       setMessages(m => [...m, dividerMsg, assistantMsg]);
 
       const validProposals = proposals.filter(p => p.type === "claim");
-      if (validProposals.length > 0) setPP(validProposals[0]);
+      if (validProposals.length > 0) {
+        const newCaptures = validProposals.map(p => ({
+          id: genId(),
+          type: "claim",
+          title: p.title,
+          content: p.content,
+          createdAt: new Date().toISOString(),
+          sourceMsgIdx: messages.length + 1,
+        }));
+        setCaptures(prev => [...prev, ...newCaptures]);
+      }
     } catch {} finally {
       setLoading(false);
     }
@@ -807,60 +920,42 @@ function DraftingSection({ project, data, setData, handle }) {
     setData({ ...data, ...u });
   };
 
-  // Build inline action cards for chat (pending proposal)
-  const inlineActions = pendingProposal ? {
-    [messages.length - 1]: (
-      <div style={ca.card}>
-        <div style={ca.header}>
-          <span style={ca.icon}>💡</span>
-          <span style={ca.title}>Proposed {CAPTURE_LABELS[pendingProposal.type]}</span>
-        </div>
-        <div style={ca.captureTitle}>{pendingProposal.title}</div>
-        <div style={ca.captureContent}>{pendingProposal.content}</div>
-        <div style={ca.row}>
-          <button onClick={approveProposal} style={ca.approveBtn}>✓ Capture</button>
-          <button onClick={editProposal} style={ca.editBtn}>✏ Edit First</button>
-          <button onClick={rejectProposal} style={ca.rejectBtn}>✕ Skip</button>
-        </div>
-      </div>
-    ),
-  } : {};
-
-  // Divider rendering
-  const renderedMessages = messages.map(m => {
+  // Divider rendering through inlineActions
+  const dividerActions = [];
+  messagesForDisplay.forEach((m, i) => {
     if (m.role === "divider") {
-      return { ...m, _isDivider: true };
-    }
-    return m;
-  });
-
-  const dividerActions = {};
-  renderedMessages.forEach((m, i) => {
-    if (m._isDivider) {
-      dividerActions[i] = (
-        <div style={ca.divider}>
-          <span>{m.content}</span>
-        </div>
-      );
+      dividerActions.push({
+        afterMessageIdx: i - 1,
+        node: <div style={ca.divider}><span>{m.content}</span></div>,
+      });
     }
   });
 
-  const combinedActions = { ...dividerActions, ...inlineActions };
+  const visibleMessages = messagesForDisplay.filter(m => m.role !== "divider");
 
-  const visibleMessages = renderedMessages.map(m => m._isDivider ? { ...m, content: "" } : m);
+  // Adjust divider indices to match filtered list
+  const adjustedActions = dividerActions.map(action => {
+    let visibleIdx = -1;
+    for (let i = 0; i <= action.afterMessageIdx; i++) {
+      if (messagesForDisplay[i] && messagesForDisplay[i].role !== "divider") visibleIdx++;
+    }
+    return { ...action, afterMessageIdx: visibleIdx };
+  });
 
-  const hideChatInput = !!editingCapture || !!pendingProposal;
+  const hideChatInput = !!editingCapture;
 
   return (
     <div style={pg.twoCol}>
       <div style={pg.leftCol}>
         <ChatThread
-          messages={visibleMessages.filter(m => !m._isDivider)}
+          messages={visibleMessages}
           loading={loading}
           onSend={sendMessage}
           placeholder={currentPhase === "describe" ? "Describe how your invention works…" : "React to the draft claims or ask for revisions…"}
-          inlineActions={combinedActions}
+          inlineActions={adjustedActions}
           hideInput={hideChatInput}
+          onUploadImage={handleUploadImage}
+          uploadEnabled={true}
         />
 
         {editingCapture && (
@@ -902,7 +997,7 @@ function DraftingSection({ project, data, setData, handle }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BRAINSTORM IMPORT PICKER (unchanged from 1.5b)
+// BRAINSTORM IMPORT PICKER (unchanged)
 // ─────────────────────────────────────────────────────────────────────────────
 function BrainstormImportPicker({ onImport }) {
   const [open, setOpen]               = useState(false);
@@ -1012,7 +1107,7 @@ function BrainstormImportPicker({ onImport }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PROJECT DASHBOARD (unchanged)
+// PROJECT DASHBOARD
 // ─────────────────────────────────────────────────────────────────────────────
 function ProjectDashboard({ onNew, onResume, onSignOut, handle, isFirstTimeUser }) {
   const [projects, setProjects] = useState([]); const [newName, setNewName] = useState(""); const [loading, setLoading] = useState(true); const [handoff, setHandoff] = useState(null);
@@ -1062,7 +1157,7 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle, isFirstTimeUser 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// STATIC SECTIONS (unchanged)
+// STATIC SECTIONS
 // ─────────────────────────────────────────────────────────────────────────────
 function StickyActionBar({ children, justSaved }) {
   return (
@@ -1279,7 +1374,7 @@ export default function PatentForgePage() {
       {section === 0 && <InventorSection    data={data} setData={handleSetData} onNext={goNext} profileName={profileName} profileCity={profileCity} profileState={profileState} profileCountry={profileCountry} profileEmail={profileEmail} justSaved={justSaved} />}
       {section === 1 && <AgreementSection   data={data} setData={handleSetData} onNext={goNext} hasAgreedBefore={hasAgreedBefore} justSaved={justSaved} />}
       {section === 2 && <TitleSection       data={data} setData={handleSetData} onNext={goNext} justSaved={justSaved} />}
-      {section === 3 && <DraftingSection    project={project} data={data} setData={handleSetData} handle={handle} />}
+      {section === 3 && <DraftingSection    project={project} data={data} setData={handleSetData} handle={handle} userId={user?.id} />}
     </Layout>
   );
 }
@@ -1315,19 +1410,8 @@ const sb = {
   cardActions: { display: "flex", gap: 2 },
   iconBtn: { background: "transparent", border: "none", color: theme.textDim, padding: "2px 5px", fontSize: 11, cursor: "pointer", borderRadius: 3 },
   cardContent: { fontSize: 11, color: theme.textMuted, lineHeight: 1.5 },
-  pendingTag: { display: "inline-block", background: theme.red, color: "#fff", fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 3, marginTop: 6, letterSpacing: 1 },
 };
 const ca = {
-  card: { background: theme.surface, border: `1px solid ${theme.red}`, borderRadius: 10, padding: 14, marginTop: 8, marginBottom: 8 },
-  header: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 },
-  icon: { fontSize: 16 },
-  title: { fontSize: 11, fontWeight: 700, letterSpacing: 2, color: theme.red, textTransform: "uppercase" },
-  captureTitle: { fontSize: 14, fontWeight: 700, color: theme.text, marginBottom: 6 },
-  captureContent: { fontSize: 13, color: theme.textMuted, lineHeight: 1.6, marginBottom: 10, whiteSpace: "pre-wrap" },
-  row: { display: "flex", gap: 6, flexWrap: "wrap" },
-  approveBtn: { background: theme.red, border: "none", borderRadius: 6, color: "#fff", padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
-  editBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textMuted, padding: "7px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
-  rejectBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.textDim, padding: "7px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   divider: { textAlign: "center", padding: "12px 16px", margin: "16px 0", background: theme.surfaceAlt, border: `1px dashed ${theme.red}`, borderRadius: 6, fontSize: 11, fontWeight: 700, letterSpacing: 2, color: theme.red, textTransform: "uppercase" },
 };
 const ed = {
