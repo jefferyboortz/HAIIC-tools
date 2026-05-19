@@ -215,19 +215,20 @@ ${captureGuide}`;
 }
 
 function buildImportAcknowledgmentPrompt({ patentTitle, brainstormBrief, imageCount }) {
-  return `You are a patent drafting collaborator at HAIIC. The inventor has just brought work over from a Brainstorm session, including ${imageCount} image${imageCount === 1 ? "" : "s"} they uploaded during Brainstorm. Write an opening message that:
+  return `You are a patent drafting collaborator at HAIIC. The inventor has just brought work over from a Brainstorm session, including ${imageCount} image${imageCount === 1 ? "" : "s"} they uploaded during Brainstorm. Write a SHORT opening message (under 150 words) with this exact structure:
 
-1. Acknowledges the project name and that you have the Brainstorm work in front of you.
-2. Describes what you see in EACH attached image explicitly, in plain language. Name what's drawn or sketched. If parts are unlabeled, say so and ask.
-3. Briefly explains how Drafting works: you'll talk through the invention in detail, capture description blocks and claimable concepts, and move to claims when ready.
-4. Asks one good opening question.
+1. ONE sentence acknowledging the project name and that you have the Brainstorm work and image${imageCount === 1 ? "" : "s"} in front of you.
+2. ONE short paragraph (2-3 sentences) briefly explaining how Drafting works: you'll talk through the invention together, capture description blocks and claimable concepts as you go, and move to drafting claims when ready.
+3. ONE good opening question that gets them describing the invention.
+
+Do NOT describe the image${imageCount === 1 ? "" : "s"} in detail in the opener. The image${imageCount === 1 ? " is" : "s are"} attached to the message — the inventor can see ${imageCount === 1 ? "it" : "them"}. Save the visual analysis for after they respond.
 
 Project title: ${patentTitle}
 
 Invention Brief (for your context):
 ${brainstormBrief.substring(0, 1500)}
 
-Do NOT propose any captures. Do NOT use marker tags. This is orientation only.`;
+Do NOT propose any captures. Do NOT use marker tags. This is orientation only. Keep it under 150 words.`;
 }
 
 function buildNoveltyPrompt(captures) {
@@ -1214,10 +1215,6 @@ function DraftingSection({ project, data, setData, handle, userId }) {
         })),
       };
       setMessages([openerMsg]);
-      setTimeout(() => {
-        const scrollContainer = document.querySelector('[data-chat-scroll]');
-        if (scrollContainer) scrollContainer.scrollTo({ top: 0, behavior: "smooth" });
-      }, 300);
     } catch (err) {
       console.error("Import acknowledgment bootstrap failed:", err);
       const fallbackMsg = {
