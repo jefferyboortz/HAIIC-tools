@@ -35,7 +35,7 @@ function briefDisplayName(brief) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// IMAGE UPLOAD HELPERS
+// IMAGE UPLOAD / COPY HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 async function uploadImageToBucket(file, userId, projectId) {
   const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -57,7 +57,7 @@ async function uploadImageToBucket(file, userId, projectId) {
 
   const { data, error: signError } = await supabase.storage
     .from(UPLOAD_BUCKET)
-    .createSignedUrl(storagePath, 60 * 60); // 1 hour for display
+    .createSignedUrl(storagePath, 60 * 60);
 
   if (signError) {
     console.error("Sign URL error:", signError);
@@ -76,6 +76,43 @@ async function freshSignedUrl(storagePath, expirySeconds = 60 * 60) {
     return null;
   }
   return data.signedUrl;
+}
+
+// Copy an image from a source storagePath (typically a Brainstorm folder) to a
+// new destination under {userId}/{projectId}/. Returns the new storagePath.
+async function copyImageToProjectFolder(sourceStoragePath, userId, projectId) {
+  try {
+    const { data: blob, error: downloadError } = await supabase.storage
+      .from(UPLOAD_BUCKET)
+      .download(sourceStoragePath);
+
+    if (downloadError || !blob) {
+      console.error("Image download failed:", sourceStoragePath, downloadError);
+      return null;
+    }
+
+    const ext = (sourceStoragePath.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const imageId = genId();
+    const newStoragePath = `${userId}/${projectId}/${imageId}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from(UPLOAD_BUCKET)
+      .upload(newStoragePath, blob, {
+        cacheControl: "3600",
+        upsert: false,
+        contentType: blob.type || "image/png",
+      });
+
+    if (uploadError) {
+      console.error("Image copy upload failed:", newStoragePath, uploadError);
+      return null;
+    }
+
+    return newStoragePath;
+  } catch (err) {
+    console.error("Image copy error:", err);
+    return null;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -115,11 +152,11 @@ HANDLING IMAGE ATTACHMENTS
 
 The inventor may attach images (sketches, photos, diagrams). When you receive an image:
 
-1. ALWAYS acknowledge what you see explicitly before doing anything else. Describe the image in plain language: "I see a side-view sketch showing a cylindrical housing with what looks like an impeller inside. There's a curved arrow suggesting rotation, and three small marks on the perimeter — possibly inlet ports. Is that right?" This catches misinterpretations early.
+1. ALWAYS acknowledge what you see explicitly before doing anything else. Describe the image in plain language. This catches misinterpretations early.
 
-2. INCORPORATE the image into your understanding. When you later propose a description_block, reference what you saw: "The impeller comprises three radial blades arranged around a central hub, as shown in the user's sketch."
+2. INCORPORATE the image into your understanding. When you later propose a description_block, reference what you saw.
 
-3. FLAG CLAIMABLE FEATURES visible only in the image. Sometimes the image reveals details the inventor didn't articulate. If you see something potentially claimable — an angle, a spacing, an arrangement — note it as a claimable concept even if the user didn't mention it. Be explicit: "I noticed the blades appear angled in your sketch — is that pitch important to how it works? If so, I'm noting it as a claimable concept."
+3. FLAG CLAIMABLE FEATURES visible only in the image. Sometimes the image reveals details the inventor didn't articulate. If you see something potentially claimable — an angle, a spacing, an arrangement — note it as a claimable concept even if the user didn't mention it.
 
 4. ASK CLARIFYING QUESTIONS when the image is ambiguous. Don't guess at unlabeled parts. Don't assume scale. Don't infer materials. Ask.`;
 
@@ -173,6 +210,24 @@ ${phaseGuide}
 ${imageGuide}
 
 ${captureGuide}`;
+}
+
+function buildImportAcknowledgmentPrompt({ patentTitle, brainstormBrief, imageCount }) {
+  return `You are a patent drafting collaborator at HAIIC. The inventor has just brought work over from a Brainstorm session, and that work includes ${imageCount} image${imageCount === 1 ? "" : "s"} they uploaded during Brainstorm. Your job is to write an opening message that:
+
+1. Acknowledges the project name and that you have the Brainstorm work in front of you.
+2. Describes what you see in EACH attached image explicitly, in plain language. Don't be vague — name what's drawn, sketched, or photographed. If parts are unlabeled, say so and ask.
+3. Briefly explains how Drafting works: you'll talk through the invention in detail, capture description blocks and claimable concepts as you go, and move to claims when ready.
+4. Asks one good opening question that builds on what they've already done.
+
+Project title: ${patentTitle}
+
+Invention Brief (for your context):
+${brainstormBrief.substring(0, 1500)}
+
+Keep your message warm and direct. Address the images one at a time — the inventor will know which one you mean.
+
+Do NOT propose any captures in this opening message. Do NOT use [CAPTURE_PROPOSED] or [CLAIMABLE_NOTED] markers. This is purely an acknowledgment and orientation message.`;
 }
 
 function buildNoveltyPrompt(captures) {
@@ -649,7 +704,7 @@ function DraftingSection({ project, data, setData, handle, userId }) {
   const [signedUrlCache, setSUC]          = useState({});
   const initialized                       = useRef(false);
 
-  // Hydrate signed URLs for any messages that have attachments with stale URLs
+  // Hydrate signed URLs for any messages that have attachments
   useEffect(() => {
     const hydrate = async () => {
       const toFetch = [];
@@ -680,6 +735,15 @@ function DraftingSection({ project, data, setData, handle, userId }) {
     initialized.current = true;
 
     const fromBrainstorm = !!data.fromBrainstorm;
+    const importedImages = Array.isArray(data.importedImages) ? data.importedImages : [];
+
+    if (fromBrainstorm && importedImages.length > 0) {
+      // Image-aware import opener — make an API call that includes the images,
+      // and let the AI acknowledge what it sees in each one.
+      bootstrapImportAcknowledgmentOpener(importedImages);
+      return;
+    }
+
     const opener = fromBrainstorm
       ? `Let's draft your provisional patent for **${data.patentTitle || "this invention"}**. Here's how this works: we'll build on the Brainstorm work you already did — I have your Invention Brief in front of me — and develop it into something detailed enough to file. As we talk, I'll capture pieces of the description and flag concepts that look potentially claimable. You'll see those building up in the sidebar to the right. When you're ready, we'll move to drafting the claims.\n\nYou can attach sketches, photos, or diagrams anytime using the 📎 button — visual thinkers welcome.\n\nTo start: looking back at your Brainstorm work, are there any refinements or new ideas that have come to mind since you wrote the brief? Or anything you want to sharpen before we go further?`
       : `Let's draft your provisional patent for **${data.patentTitle || "this invention"}**. Here's how this works: we'll talk through your invention in your own words — I'll ask questions to make sure I understand it, and as we go I'll capture pieces of the description and flag concepts that look potentially claimable. You'll see those building up in the sidebar to the right. When you're ready, we'll move to drafting the claims.\n\nYou can attach sketches, photos, or diagrams anytime using the 📎 button — visual thinkers welcome.\n\nTo start: tell me about your invention. What does it do, and what problem does it solve?`;
@@ -693,12 +757,75 @@ function DraftingSection({ project, data, setData, handle, userId }) {
     setMessages([openerMsg]);
   }, []);
 
+  const bootstrapImportAcknowledgmentOpener = async (importedImages) => {
+    setLoading(true);
+    try {
+      // Get short-lived URLs for each imported image for the API call
+      const apiAttachments = [];
+      for (const img of importedImages) {
+        const url = await freshSignedUrl(img.storagePath, 5 * 60);
+        if (url) apiAttachments.push({ type: "image", url });
+      }
+
+      const system = buildImportAcknowledgmentPrompt({
+        patentTitle: data.patentTitle || "this invention",
+        brainstormBrief: data.brainstormBrief || "",
+        imageCount: importedImages.length,
+      });
+
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system,
+          messages: [{
+            role: "user",
+            content: "Here are the images I uploaded during Brainstorm. Please acknowledge each one and orient me to Drafting.",
+            attachments: apiAttachments,
+          }],
+          max_tokens: 2500,
+        }),
+      });
+      const r = await res.json();
+      const text = r.content?.map(i => i.type === "text" ? i.text : "").join("\n") || "Welcome to Drafting. Let's start by walking through your invention.";
+
+      // The opener message has all the imported images attached for display
+      const openerMsg = {
+        id: genId(),
+        role: "assistant",
+        content: text,
+        createdAt: new Date().toISOString(),
+        attachments: importedImages.map(img => ({
+          type: "image",
+          storagePath: img.storagePath,
+          filename: img.filename || "imported image",
+        })),
+      };
+      setMessages([openerMsg]);
+    } catch (err) {
+      console.error("Import acknowledgment bootstrap failed:", err);
+      const fallbackMsg = {
+        id: genId(),
+        role: "assistant",
+        content: `Welcome to Drafting. I have your Brainstorm work and ${importedImages.length} image${importedImages.length === 1 ? "" : "s"} you uploaded. Let's walk through your invention — tell me about it in your own words.`,
+        createdAt: new Date().toISOString(),
+        attachments: importedImages.map(img => ({
+          type: "image",
+          storagePath: img.storagePath,
+          filename: img.filename || "imported image",
+        })),
+      };
+      setMessages([fallbackMsg]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Persist on every change
   useEffect(() => {
     setData({ ...data, messages, captures, currentPhase });
   }, [messages, captures, currentPhase]);
 
-  // beforeunload flush
   useEffect(() => {
     const flush = () => {
       try {
@@ -723,7 +850,6 @@ function DraftingSection({ project, data, setData, handle, userId }) {
     };
   });
 
-  // Upload handler — passed to ChatThread
   const handleUploadImage = async (file) => {
     if (!userId || !project?.id) {
       throw new Error("Missing user or project context");
@@ -762,14 +888,13 @@ function DraftingSection({ project, data, setData, handle, userId }) {
         brainstormBrief: data.brainstormBrief,
       });
 
-      // Build API messages — translate attachments to {url} for the API proxy
       const apiMessages = await Promise.all(updated.map(async m => {
         const base = { role: m.role, content: m.content };
         if (Array.isArray(m.attachments) && m.attachments.length > 0) {
           const apiAttachments = [];
           for (const att of m.attachments) {
             if (att.type === "image" && att.storagePath) {
-              const url = await freshSignedUrl(att.storagePath, 5 * 60); // short-lived for API
+              const url = await freshSignedUrl(att.storagePath, 5 * 60);
               if (url) apiAttachments.push({ type: "image", url });
             }
           }
@@ -788,7 +913,6 @@ function DraftingSection({ project, data, setData, handle, userId }) {
 
       const { proposals, claimables, cleanText } = parseMarkers(raw);
 
-      // Filter proposals to current phase rules (defensive guard)
       const validProposals = proposals.filter(p => {
         if (currentPhase === "describe") return p.type === "description_block";
         if (currentPhase === "claim") return p.type === "claim";
@@ -803,7 +927,6 @@ function DraftingSection({ project, data, setData, handle, userId }) {
       };
       setMessages(m => [...m, assistantMsg]);
 
-      // Silent capture: description_block, claim, claimable_concept all auto-save
       const newCaptures = [];
 
       validProposals.forEach(p => {
@@ -920,7 +1043,6 @@ function DraftingSection({ project, data, setData, handle, userId }) {
     setData({ ...data, ...u });
   };
 
-  // Divider rendering through inlineActions
   const dividerActions = [];
   messagesForDisplay.forEach((m, i) => {
     if (m.role === "divider") {
@@ -933,7 +1055,6 @@ function DraftingSection({ project, data, setData, handle, userId }) {
 
   const visibleMessages = messagesForDisplay.filter(m => m.role !== "divider");
 
-  // Adjust divider indices to match filtered list
   const adjustedActions = dividerActions.map(action => {
     let visibleIdx = -1;
     for (let i = 0; i <= action.afterMessageIdx; i++) {
@@ -997,13 +1118,14 @@ function DraftingSection({ project, data, setData, handle, userId }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BRAINSTORM IMPORT PICKER (unchanged)
+// BRAINSTORM IMPORT PICKER
 // ─────────────────────────────────────────────────────────────────────────────
 function BrainstormImportPicker({ onImport }) {
   const [open, setOpen]               = useState(false);
   const [loading, setLoading]         = useState(false);
   const [brainstormProjects, setBP]   = useState([]);
   const [fetched, setFetched]         = useState(false);
+  const [importing, setImporting]     = useState(false);
 
   const fetchBrainstormProjects = async () => {
     setLoading(true);
@@ -1024,7 +1146,8 @@ function BrainstormImportPicker({ onImport }) {
     if (next && !fetched) fetchBrainstormProjects();
   };
 
-  const handlePick = (project) => {
+  const handlePick = async (project) => {
+    if (importing) return;
     const briefs = Array.isArray(project?.data?.briefs) ? project.data.briefs : [];
     if (briefs.length === 0) return;
     const latest = briefs[briefs.length - 1];
@@ -1033,13 +1156,21 @@ function BrainstormImportPicker({ onImport }) {
     const fieldMatch = briefContent.match(/Field:\s*(.+)/);
     const title = titleMatch ? titleMatch[1].trim() : "";
     const field = fieldMatch ? fieldMatch[1].trim() : "";
-    onImport({
-      name: project.name || "Brainstorm Import",
-      patentTitle: title,
-      patentField: field,
-      brainstormBrief: briefContent,
-      briefVersionLabel: briefDisplayName(latest),
-    });
+    const referencedImages = Array.isArray(latest.referencedImages) ? latest.referencedImages : [];
+
+    setImporting(true);
+    try {
+      await onImport({
+        name: project.name || "Brainstorm Import",
+        patentTitle: title,
+        patentField: field,
+        brainstormBrief: briefContent,
+        briefVersionLabel: briefDisplayName(latest),
+        referencedImages,
+      });
+    } finally {
+      setImporting(false);
+    }
   };
 
   return (
@@ -1050,11 +1181,12 @@ function BrainstormImportPicker({ onImport }) {
       {open && (
         <div style={imp.panel}>
           <p style={imp.constraint}>
-            Patent Forge imports the <strong>latest brief</strong> from each Brainstorm project.
+            Patent Forge imports the <strong>latest brief</strong> from each Brainstorm project, along with any images you uploaded during that session.
             To use an older version, open the project in Brainstorm first and re-synthesize from
             the captures you want — that version becomes the new latest.
           </p>
           {loading && <p style={imp.loadingMsg}>Loading your Brainstorm projects…</p>}
+          {importing && <p style={imp.loadingMsg}>Importing brief and copying images — this can take a few seconds…</p>}
           {!loading && fetched && brainstormProjects.length === 0 && (
             <p style={imp.emptyMsg}>
               No Brainstorm projects yet. Start one in Brainstorm first, then come back here to import.
@@ -1066,6 +1198,7 @@ function BrainstormImportPicker({ onImport }) {
                 const briefs = Array.isArray(p?.data?.briefs) ? p.data.briefs : [];
                 const hasBrief = briefs.length > 0;
                 const latest = hasBrief ? briefs[briefs.length - 1] : null;
+                const imgCount = Array.isArray(latest?.referencedImages) ? latest.referencedImages.length : 0;
                 return (
                   <div key={p.id} style={{ ...imp.row, ...(hasBrief ? {} : imp.rowDim) }}>
                     <div style={imp.rowMain}>
@@ -1076,6 +1209,7 @@ function BrainstormImportPicker({ onImport }) {
                             <>
                               Latest: <span style={imp.versionLabel}>{briefDisplayName(latest)}</span>
                               {" · "}{new Date(latest.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                              {imgCount > 0 && <span style={imp.imgTag}>{imgCount} image{imgCount === 1 ? "" : "s"}</span>}
                             </>
                           ) : (
                             <span style={imp.noBriefIndicator}>No brief yet</span>
@@ -1083,7 +1217,9 @@ function BrainstormImportPicker({ onImport }) {
                         </div>
                       </div>
                       {hasBrief ? (
-                        <button onClick={() => handlePick(p)} style={imp.useBtn}>Use this →</button>
+                        <button onClick={() => handlePick(p)} disabled={importing} style={{ ...imp.useBtn, opacity: importing ? 0.5 : 1, cursor: importing ? "not-allowed" : "pointer" }}>
+                          Use this →
+                        </button>
                       ) : (
                         <span style={imp.useBtnDisabled}>—</span>
                       )}
@@ -1109,30 +1245,95 @@ function BrainstormImportPicker({ onImport }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // PROJECT DASHBOARD
 // ─────────────────────────────────────────────────────────────────────────────
-function ProjectDashboard({ onNew, onResume, onSignOut, handle, isFirstTimeUser }) {
-  const [projects, setProjects] = useState([]); const [newName, setNewName] = useState(""); const [loading, setLoading] = useState(true); const [handoff, setHandoff] = useState(null);
+function ProjectDashboard({ onNew, onResume, onSignOut, handle, isFirstTimeUser, userId }) {
+  const [projects, setProjects] = useState([]); const [newName, setNewName] = useState(""); const [loading, setLoading] = useState(true); const [handoff, setHandoff] = useState(null); const [processingHandoff, setProcessingHandoff] = useState(false);
   useEffect(() => { fetchProjects(); try { const h = localStorage.getItem(HANDOFF_KEY); if (h) setHandoff(JSON.parse(h)); } catch {} }, []);
   const fetchProjects = async () => { setLoading(true); const { data } = await supabase.from(TABLE).select("*").order("updated_at", { ascending: false }); setProjects(data || []); setLoading(false); };
-  const handleHandoff = async () => { if (!handoff) return; const { data: { user } } = await supabase.auth.getUser(); const project = { id: genId(), user_id: user.id, name: handoff.name || "Brainstorm Import", section: 0, data: { patentTitle: handoff.patentTitle || "", patentField: handoff.patentField || handoff.field || "", summary: handoff.inventionBrief ? handoff.inventionBrief.substring(0, 400) : "", brainstormBrief: handoff.inventionBrief || "", fromBrainstorm: true } }; await supabase.from(TABLE).insert(project); try { localStorage.removeItem(HANDOFF_KEY); } catch {} setHandoff(null); onNew(project); };
+
+  const handleHandoff = async () => {
+    if (!handoff || processingHandoff) return;
+    setProcessingHandoff(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const newProjectId = genId();
+      const referencedImages = Array.isArray(handoff.referencedImages) ? handoff.referencedImages : [];
+      const importedImages = [];
+      for (const ref of referencedImages) {
+        if (!ref?.storagePath) continue;
+        const newPath = await copyImageToProjectFolder(ref.storagePath, user.id, newProjectId);
+        if (newPath) {
+          importedImages.push({
+            storagePath: newPath,
+            filename: ref.filename || "imported image",
+            caption: ref.caption || "",
+          });
+        }
+      }
+
+      const project = {
+        id: newProjectId,
+        user_id: user.id,
+        name: handoff.name || "Brainstorm Import",
+        section: 0,
+        data: {
+          patentTitle: handoff.patentTitle || "",
+          patentField: handoff.patentField || handoff.field || "",
+          summary: handoff.inventionBrief ? handoff.inventionBrief.substring(0, 400) : "",
+          brainstormBrief: handoff.inventionBrief || "",
+          fromBrainstorm: true,
+          importedImages,
+        },
+      };
+      await supabase.from(TABLE).insert(project);
+      try { localStorage.removeItem(HANDOFF_KEY); } catch {}
+      setHandoff(null);
+      onNew(project);
+    } finally {
+      setProcessingHandoff(false);
+    }
+  };
+
   const handleNew = async () => { const name = newName.trim() || `Patent Application — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`; const { data: { user } } = await supabase.auth.getUser(); const project = { id: genId(), user_id: user.id, name, section: 0, data: {} }; await supabase.from(TABLE).insert(project); setNewName(""); onNew(project); };
+
   const handleImportFromBrainstorm = async (imported) => {
     const { data: { user } } = await supabase.auth.getUser();
+    const newProjectId = genId();
+    const referencedImages = Array.isArray(imported.referencedImages) ? imported.referencedImages : [];
+    const importedImages = [];
+    for (const ref of referencedImages) {
+      if (!ref?.storagePath) continue;
+      const newPath = await copyImageToProjectFolder(ref.storagePath, user.id, newProjectId);
+      if (newPath) {
+        importedImages.push({
+          storagePath: newPath,
+          filename: ref.filename || "imported image",
+          caption: ref.caption || "",
+        });
+      }
+    }
     const project = {
-      id: genId(), user_id: user.id, name: imported.name, section: 0,
+      id: newProjectId,
+      user_id: user.id,
+      name: imported.name,
+      section: 0,
       data: {
-        patentTitle: imported.patentTitle || "", patentField: imported.patentField || "",
+        patentTitle: imported.patentTitle || "",
+        patentField: imported.patentField || "",
         summary: imported.brainstormBrief ? imported.brainstormBrief.substring(0, 400) : "",
         brainstormBrief: imported.brainstormBrief || "",
         importedBriefVersion: imported.briefVersionLabel || "",
         fromBrainstorm: true,
+        importedImages,
       },
     };
     await supabase.from(TABLE).insert(project);
     onNew(project);
   };
+
   const handleDelete = async (id, name) => { if (!confirm(`Delete "${name}"?`)) return; await supabase.from(TABLE).delete().eq("id", id); setProjects(p => p.filter(x => x.id !== id)); };
   const handleRename = async (id) => { const p = projects.find(p => p.id === id); const n = prompt("Rename:", p.name); if (!n?.trim()) return; await supabase.from(TABLE).update({ name: n.trim(), updated_at: new Date().toISOString() }).eq("id", id); setProjects(prev => prev.map(x => x.id === id ? { ...x, name: n.trim() } : x)); };
   const sl = (i) => SECTIONS[i]?.label || "?";
+
   return (
     <div style={ps.content}>
       <div style={db.topRow}><h2 style={ps.title}>Your Patent Applications</h2><div style={db.userRow}><span style={db.userHandle}>{handle}</span><button onClick={onSignOut} style={db.signOutBtn}>Sign Out</button></div></div>
@@ -1146,18 +1347,36 @@ function ProjectDashboard({ onNew, onResume, onSignOut, handle, isFirstTimeUser 
           </div>
         </div>
       )}
-      {handoff && (<div style={hf.banner}><div style={hf.bannerLeft}><div style={hf.bannerTitle}>🔗 Brainstorm session ready to continue</div><div style={hf.bannerMeta}>"{handoff.name}" — title, field, and brief pre-filled.</div></div><div style={hf.bannerRight}><button onClick={handleHandoff} style={hf.continueBtn}>Continue in Patent Forge →</button><button onClick={() => { try { localStorage.removeItem(HANDOFF_KEY); } catch {} setHandoff(null); }} style={hf.dismissBtn}>Dismiss</button></div></div>)}
+      {handoff && (
+        <div style={hf.banner}>
+          <div style={hf.bannerLeft}>
+            <div style={hf.bannerTitle}>🔗 Brainstorm session ready to continue</div>
+            <div style={hf.bannerMeta}>
+              "{handoff.name}" — title, field, and brief pre-filled.
+              {Array.isArray(handoff.referencedImages) && handoff.referencedImages.length > 0 && (
+                <> Including {handoff.referencedImages.length} image{handoff.referencedImages.length === 1 ? "" : "s"} you uploaded.</>
+              )}
+            </div>
+          </div>
+          <div style={hf.bannerRight}>
+            <button onClick={handleHandoff} disabled={processingHandoff} style={{ ...hf.continueBtn, opacity: processingHandoff ? 0.5 : 1, cursor: processingHandoff ? "not-allowed" : "pointer" }}>
+              {processingHandoff ? "Importing…" : "Continue in Patent Forge →"}
+            </button>
+            <button onClick={() => { try { localStorage.removeItem(HANDOFF_KEY); } catch {} setHandoff(null); }} disabled={processingHandoff} style={hf.dismissBtn}>Dismiss</button>
+          </div>
+        </div>
+      )}
       <div style={db.newRow}><input style={{ ...ps.input, flex: 1, marginTop: 0 }} value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleNew()} placeholder="Name your invention (optional)..." /><button onClick={handleNew} style={ps.nextBtn}>Start New Application →</button></div>
       <BrainstormImportPicker onImport={handleImportFromBrainstorm} />
       {loading && <p style={{ color: theme.textMuted, fontSize: 14 }}>Loading your applications…</p>}
-      {!loading && projects.length > 0 && (<div style={db.list}><p style={db.listHeader}>SAVED APPLICATIONS ({projects.length})</p>{projects.map(p => (<div key={p.id} style={db.card}><div style={db.cardLeft}><div style={db.cardName}>{p.name}{p.data?.fromBrainstorm && <span style={hf.tag}>from Brainstorm</span>}{p.data?.importedBriefVersion && <span style={imp.briefTag}>{p.data.importedBriefVersion}</span>}</div><div style={db.cardMeta}>Last saved {new Date(p.updated_at).toLocaleString()} &nbsp;·&nbsp; Stage: <span style={{ color: theme.red }}>{sl(p.section)}</span></div></div><div style={db.cardRight}><button onClick={() => onResume(p)} style={db.resumeBtn}>Resume →</button><button onClick={() => handleRename(p.id)} style={db.iconBtn} title="Rename">✏</button><button onClick={() => handleDelete(p.id, p.name)} style={db.iconBtn} title="Delete">✕</button></div></div>))}</div>)}
+      {!loading && projects.length > 0 && (<div style={db.list}><p style={db.listHeader}>SAVED APPLICATIONS ({projects.length})</p>{projects.map(p => (<div key={p.id} style={db.card}><div style={db.cardLeft}><div style={db.cardName}>{p.name}{p.data?.fromBrainstorm && <span style={hf.tag}>from Brainstorm</span>}{p.data?.importedBriefVersion && <span style={imp.briefTag}>{p.data.importedBriefVersion}</span>}{Array.isArray(p.data?.importedImages) && p.data.importedImages.length > 0 && <span style={hf.imgTag}>📎 {p.data.importedImages.length}</span>}</div><div style={db.cardMeta}>Last saved {new Date(p.updated_at).toLocaleString()} &nbsp;·&nbsp; Stage: <span style={{ color: theme.red }}>{sl(p.section)}</span></div></div><div style={db.cardRight}><button onClick={() => onResume(p)} style={db.resumeBtn}>Resume →</button><button onClick={() => handleRename(p.id)} style={db.iconBtn} title="Rename">✏</button><button onClick={() => handleDelete(p.id, p.name)} style={db.iconBtn} title="Delete">✕</button></div></div>))}</div>)}
       {!loading && projects.length === 0 && !handoff && <div style={db.empty}>No saved applications yet. Start your first one above.</div>}
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// STATIC SECTIONS
+// STATIC SECTIONS (unchanged)
 // ─────────────────────────────────────────────────────────────────────────────
 function StickyActionBar({ children, justSaved }) {
   return (
@@ -1181,10 +1400,12 @@ function InventorSection({ data, setData, onNext, profileName, profileCity, prof
       <h2 style={ps.title}>Inventor Information</h2>
       <p style={ps.desc}>This is who will be named on the provisional patent application.</p>
       {greetingLine && <div style={hf.infoBar}>{greetingLine}</div>}
-      {data.fromBrainstorm && <div style={hf.infoBar}>💡 Your Brainstorm session has been pre-loaded — title, field, and brief are ready in the next steps.</div>}
+      {data.fromBrainstorm && <div style={hf.infoBar}>💡 Your Brainstorm session has been pre-loaded — title, field, brief, and any images you uploaded are ready in the next steps.</div>}
+
       <label style={ps.label}>Full Legal Name</label>
       <input style={ps.input} value={name} onChange={e => setName(e.target.value)} placeholder="e.g., Jane M. Smith — or your handle" />
       <p style={ps.helper}>Your handle works here too. The USPTO will need your legal name at filing, but you can keep it private in Patent Forge and add it to the filing documents you download later.</p>
+
       <label style={ps.label}>City</label><input style={ps.input} value={city} onChange={e => setCity(e.target.value)} placeholder="e.g., Decatur" />
       <label style={ps.label}>State / Province</label><input style={ps.input} value={stateVal} onChange={e => setStateVal(e.target.value)} placeholder="e.g., Georgia" />
       <label style={ps.label}>Country</label><input style={ps.input} value={country} onChange={e => setCountry(e.target.value)} />
@@ -1341,7 +1562,7 @@ export default function PatentForgePage() {
     return (
       <Layout title="Patent Forge" logoSrc="/patentforge-logo.png">
         <div style={styles.header}><p style={styles.label}>PATENT FORGE</p><h1 style={styles.heading}>Draft Your Provisional Patent</h1></div>
-        <ProjectDashboard onNew={handleNew} onResume={handleResume} onSignOut={handleSignOut} handle={handle} isFirstTimeUser={isFirstTimeUser} />
+        <ProjectDashboard onNew={handleNew} onResume={handleResume} onSignOut={handleSignOut} handle={handle} isFirstTimeUser={isFirstTimeUser} userId={user?.id} />
       </Layout>
     );
   }
@@ -1494,6 +1715,7 @@ const imp = {
   useBtnDisabled: { color: theme.textDim, fontSize: 18, padding: "7px 14px", fontWeight: 700 },
   rowInstruction: { fontSize: 12, color: theme.textMuted, lineHeight: 1.6, marginTop: 8, marginBottom: 0, paddingTop: 8, borderTop: `1px dashed ${theme.border}`, fontStyle: "italic" },
   briefTag: { background: theme.surfaceAlt, color: theme.textMuted, fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4, marginLeft: 6, verticalAlign: "middle", border: `1px solid ${theme.border}` },
+  imgTag: { background: theme.surfaceAlt, color: theme.textMuted, fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 3, marginLeft: 6, border: `1px solid ${theme.border}` },
 };
 const db = {
   topRow:     { display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 4 },
@@ -1531,6 +1753,7 @@ const hf = {
   dismissBtn: { background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 7, color: theme.textMuted, padding: "8px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   infoBar: { background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: theme.textMuted },
   tag: { background: theme.red, color: "#fff", borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700, marginLeft: 8, verticalAlign: "middle" },
+  imgTag: { background: theme.surfaceAlt, color: theme.textMuted, borderRadius: 4, padding: "2px 6px", fontSize: 10, fontWeight: 600, marginLeft: 6, border: `1px solid ${theme.border}` },
 };
 const na = {
   wrap:        { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 10, overflow: "hidden" },
