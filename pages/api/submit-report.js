@@ -23,8 +23,19 @@ export default async function handler(req, res) {
   const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!supabaseUrl || !supabaseServiceKey) {
-    console.error("Missing Supabase env vars for submit-report route.");
-    return res.status(500).json({ error: "Server configuration error." });
+    console.error("Missing Supabase env vars for submit-report route.", {
+      hasUrl: !!supabaseUrl,
+      hasKey: !!supabaseServiceKey,
+      urlLen: supabaseUrl?.length || 0,
+      keyLen: supabaseServiceKey?.length || 0,
+    });
+    return res.status(500).json({
+      error: "Server configuration error.",
+      hasUrl: !!supabaseUrl,
+      hasKey: !!supabaseServiceKey,
+      urlLen: supabaseUrl?.length || 0,
+      keyLen: supabaseServiceKey?.length || 0,
+    });
   }
 
   const supabase = createClient(supabaseUrl, supabaseServiceKey, {
