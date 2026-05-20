@@ -4,11 +4,13 @@ import Head from "next/head";
 import Link from "next/link";
 import supabase from "../lib/supabaseClient";
 import theme from "./theme";
+import ReportProblemModal from "./ReportProblemModal";
 
 export default function Layout({ children, title, logoSrc }) {
   const router = useRouter();
   const [authState, setAuthState] = useState("loading");
   const [displayName, setDisplayName] = useState(null);
+  const [reportOpen, setReportOpen] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -70,6 +72,15 @@ export default function Layout({ children, title, logoSrc }) {
             <Link href="/brainstorm" style={styles.navLink}>Brainstorm</Link>
             <Link href="/patent-forge" style={styles.navLink}>Patent Forge</Link>
             <span style={styles.navDivider}>|</span>
+            {authState === "signedIn" && (
+              <button
+                onClick={() => setReportOpen(true)}
+                style={styles.reportBtn}
+                title="Report a problem or share feedback"
+              >
+                Report a Problem
+              </button>
+            )}
             {authState === "loading" && <span style={styles.navMuted}>…</span>}
             {authState === "signedIn" && (
               <Link href="/profile" style={styles.navAccount}>{displayName}</Link>
@@ -93,6 +104,7 @@ export default function Layout({ children, title, logoSrc }) {
           </p>
         </footer>
       </div>
+      <ReportProblemModal open={reportOpen} onClose={() => setReportOpen(false)} />
     </>
   );
 }
@@ -152,6 +164,18 @@ const styles = {
   navMuted: {
     color: theme.textDim,
     fontSize: 14,
+  },
+  reportBtn: {
+    background: "transparent",
+    border: `1px solid ${theme.border}`,
+    borderRadius: 6,
+    color: theme.textMuted,
+    padding: "6px 12px",
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
+    fontFamily: "'DM Sans', sans-serif",
+    transition: "all 0.2s",
   },
   main: { flex: 1, maxWidth: 900, width: "100%", margin: "0 auto", padding: "40px 24px" },
   footer: {
