@@ -119,6 +119,25 @@ async function copyImageToProjectFolder(sourceStoragePath, userId, projectId) {
   }
 }
 
+async function imageToDataUrl(storagePath) {
+  try {
+    const url = await freshSignedUrl(storagePath, 5 * 60);
+    if (!url) return null;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch (err) {
+    console.error("Image to data URL failed:", storagePath, err);
+    return null;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SYSTEM PROMPTS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -548,6 +567,204 @@ async function exportFilingToDocx(project, handle, filing) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// FILING DRAFT PDF EXPORT
+// ─────────────────────────────────────────────────────────────────────────────
+async function exportFilingToPdf(project, handle, filing) {
+  const { jsPDF } = await import("jspdf");
+  const doc = new jsPDF({ unit: "pt", format: "letter" });
+
+  const RED = "#C0392B", GRAY = "#555555", BLACK = "#1A1A1A";
+  const PAGE_W = 612, PAGE_H = 792;
+  const MARGIN_L = 54, MARGIN_R = 54, MARGIN_T = 72, MARGIN_B = 72;
+  const CONTENT_W = PAGE_W - MARGIN_L - MARGIN_R;
+
+  const sectionHeaderRe = /^[A-Z][A-Z\s&-]+$/;
+  const lines = (filing.content || "").split("\n");
+
+  let pageNum = 1;
+  let y = MARGIN_T;
+  const totalPagesPlaceholder = "{TOTAL}";
+
+  const drawHeader = () => {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(RED);
+    doc.text("HAIIC PATENT FORGE", MARGIN_L, 40);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(GRAY);
+    doc.text("apps-haiic.com", PAGE_W - MARGIN_R, 40, { align: "right" });
+    doc.setDrawColor(RED);
+    doc.setLineWidth(0.75);
+    doc.line(MARGIN_L, 48, PAGE_W - MARGIN_R, 48);
+  };
+
+  const drawFooter = (n) => {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(GRAY);
+    const footerText = `${filingDisplayName(filing)}  ·  Drafted with Claude  ·  Inventor: ${handle || "—"}`;
+    doc.text(footerText, MARGIN_L, PAGE_H - 36);
+    doc.text(`Page ${n}`, PAGE_W - MARGIN_R, PAGE_H - 36, { align: "right" });
+  };
+
+  const newPage = () => {
+    drawFooter(pageNum);
+    doc.addPage();
+    pageNum++;
+    y = MARGIN_T;
+    drawHeader();
+  };
+
+  const ensureSpace = (needed) => {
+    if (y + needed > PAGE_H - MARGIN_B) newPage();
+  };
+
+  drawHeader();
+
+  // Cover block
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(RED);
+  doc.text("HUMAN-AI INNOVATION COMMONS", MARGIN_L, y);
+  y += 24;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(22);
+  doc.setTextColor(BLACK);
+  doc.text("PROVISIONAL PATENT APPLICATION", MARGIN_L, y);
+  y += 28;
+
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(10);
+  doc.setTextColor(GRAY);
+  const subtitle = `${filingDisplayName(filing)} · Drafted by ${handle || "the inventor"} · ${new Date(filing.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}`;
+  doc.text(subtitle, MARGIN_L, y);
+  y += 32;
+
+  // Body
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      y += 8;
+      continue;
+    }
+
+    if (sectionHeaderRe.test(trimmed) && trimmed.length > 3 && trimmed.length < 60) {
+      ensureSpace(40);
+      y += 12;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(13);
+      doc.setTextColor(RED);
+      doc.text(trimmed, MARGIN_L, y);
+      y += 6;
+      doc.setDrawColor(RED);
+      doc.setLineWidth(0.5);
+      doc.line(MARGIN_L, y, PAGE_W - MARGIN_R, y);
+      y += 16;
+    } else {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10.5);
+      doc.setTextColor(BLACK);
+      const wrapped = doc.splitTextToSize(trimmed, CONTENT_W);
+      for (const wline of wrapped) {
+        ensureSpace(16);
+        doc.text(wline, MARGIN_L, y);
+        y += 14;
+      }
+      y += 4;
+    }
+  }
+
+  // Figures section with embedded images
+  const refs = Array.isArray(filing.referencedImages) ? filing.referencedImages : [];
+  if (refs.length > 0) {
+    newPage();
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.setTextColor(RED);
+    doc.text("FIGURES", MARGIN_L, y);
+    y += 6;
+    doc.setDrawColor(RED);
+    doc.setLineWidth(0.5);
+    doc.line(MARGIN_L, y, PAGE_W - MARGIN_R, y);
+    y += 24;
+
+    for (let i = 0; i < refs.length; i++) {
+      const ref = refs[i];
+      const dataUrl = await imageToDataUrl(ref.storagePath);
+      if (!dataUrl) continue;
+
+      const figLabel = `FIG. ${i + 1}`;
+      const caption = ref.caption || ref.filename || "Attached image";
+
+      // Estimate image render box; preserve aspect ratio
+      const maxW = CONTENT_W;
+      const maxH = 320;
+      let drawW = maxW;
+      let drawH = maxH;
+
+      try {
+        const img = await new Promise((resolve, reject) => {
+          const im = new Image();
+          im.onload = () => resolve(im);
+          im.onerror = reject;
+          im.src = dataUrl;
+        });
+        const ratio = img.width / img.height;
+        if (ratio > maxW / maxH) {
+          drawW = maxW;
+          drawH = maxW / ratio;
+        } else {
+          drawH = maxH;
+          drawW = maxH * ratio;
+        }
+      } catch {}
+
+      ensureSpace(drawH + 60);
+
+      // Figure label
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(BLACK);
+      doc.text(figLabel, MARGIN_L, y);
+      y += 16;
+
+      // Image
+      try {
+        const fmt = dataUrl.startsWith("data:image/jpeg") || dataUrl.startsWith("data:image/jpg") ? "JPEG" : "PNG";
+        doc.addImage(dataUrl, fmt, MARGIN_L, y, drawW, drawH);
+        y += drawH + 10;
+      } catch (err) {
+        console.error("Failed to embed image:", err);
+        doc.setFont("helvetica", "italic");
+        doc.setFontSize(9);
+        doc.setTextColor(GRAY);
+        doc.text("[image could not be embedded]", MARGIN_L, y);
+        y += 16;
+      }
+
+      // Caption
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(9);
+      doc.setTextColor(GRAY);
+      const capWrapped = doc.splitTextToSize(caption, CONTENT_W);
+      for (const cline of capWrapped) {
+        ensureSpace(12);
+        doc.text(cline, MARGIN_L, y);
+        y += 12;
+      }
+      y += 18;
+    }
+  }
+
+  drawFooter(pageNum);
+
+  const filename = `HAIIC-Patent-Forge-${(project.name || "filing").replace(/[^a-z0-9]/gi, "-").toLowerCase()}-${filingDisplayName(filing).replace(/\s+/g, "-").toLowerCase()}.pdf`;
+  doc.save(filename);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SIDEBAR
 // ─────────────────────────────────────────────────────────────────────────────
 function PatentForgeSidebar({ captures, currentPhase, onEditCapture, onDeleteCapture, onPhaseTransition }) {
@@ -941,6 +1158,7 @@ function FilingsView({
 }) {
   const [editingLabel, setEditingLabel] = useState(false);
   const [labelDraft, setLabelDraft] = useState("");
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   const hasAny = filings.length > 0;
   const selected = hasAny ? (filings.find(f => f.id === selectedFilingId) || filings[filings.length - 1]) : null;
@@ -960,6 +1178,19 @@ function FilingsView({
   };
 
   const stale = computeStale();
+
+  const handlePdfClick = async () => {
+    if (!selected || exportingPdf) return;
+    setExportingPdf(true);
+    try {
+      await exportFilingToPdf(project, handle, selected);
+    } catch (err) {
+      console.error("PDF export failed:", err);
+      alert("PDF export failed. Try again.");
+    } finally {
+      setExportingPdf(false);
+    }
+  };
 
   if (!hasAny) {
     return (
@@ -1062,6 +1293,9 @@ function FilingsView({
         </button>
         <button onClick={() => exportFilingToDocx(project, handle, selected)} style={fv.downloadBtn}>
           Download .docx
+        </button>
+        <button onClick={handlePdfClick} disabled={exportingPdf} style={{ ...fv.pdfBtn, opacity: exportingPdf ? 0.6 : 1 }}>
+          {exportingPdf ? "Building PDF…" : "Download as PDF"}
         </button>
         {!selected.markedReady ? (
           <button onClick={() => onMarkReady(selected.id, true)} style={fv.readyBtn}>
@@ -2352,6 +2586,7 @@ const fv = {
   actions: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 },
   copyBtn: { padding: "10px 18px", background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.textMuted, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   downloadBtn: { padding: "10px 18px", background: theme.red, border: "none", borderRadius: 8, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
+  pdfBtn: { padding: "10px 18px", background: theme.red, border: "none", borderRadius: 8, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   readyBtn: { padding: "10px 16px", background: "transparent", border: "1px solid #80ff99", borderRadius: 8, color: "#80ff99", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   readyBtnUnmark: { padding: "10px 16px", background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.textDim, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
   deleteBtn: { padding: "10px 14px", background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.textDim, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" },
