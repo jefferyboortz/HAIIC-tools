@@ -1,3 +1,4 @@
+// rev 2
 export default function handler(req, res) {
   res.status(200).json({
     hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
