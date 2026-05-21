@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = "https://quruzppflgdbddxyylxu.supabase.co";
-const SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cnV6cHBmbGdkYmRkeHl5bHh1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MzYwNDU1MSwiZXhwIjoyMDg5MTgwNTUxfQ.-t_tgliH2k5rGJSevsdHTpsz9X2gdaxBjbLP56DFOao";
+const SUPABASE_SERVICE_ROLE_KEY = "sb_secret_VXUP_L-bcQL-Ipmoib_hUg_Cr4_l4Yf";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
