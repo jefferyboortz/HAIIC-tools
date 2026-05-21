@@ -1,5 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
 
+const SUPABASE_URL = "https://quruzppflgdbddxyylxu.supabase.co";
+const SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1cnV6cHBmbGdkYmRkeHl5bHh1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MzYwNDU1MSwiZXhwIjoyMDg5MTgwNTUxfQ.-t_tgliH2k5rGJSevsdHTpsz9X2gdaxBjbLP56DFOao";
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -19,26 +22,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Missing required fields." });
   }
 
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl || !supabaseServiceKey) {
-    console.error("Missing Supabase env vars for submit-report route.", {
-      hasUrl: !!supabaseUrl,
-      hasKey: !!supabaseServiceKey,
-      urlLen: supabaseUrl?.length || 0,
-      keyLen: supabaseServiceKey?.length || 0,
-    });
-    return res.status(500).json({
-      error: "Server configuration error.",
-      hasUrl: !!supabaseUrl,
-      hasKey: !!supabaseServiceKey,
-      urlLen: supabaseUrl?.length || 0,
-      keyLen: supabaseServiceKey?.length || 0,
-    });
-  }
-
-  const supabase = createClient(supabaseUrl, supabaseServiceKey, {
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
