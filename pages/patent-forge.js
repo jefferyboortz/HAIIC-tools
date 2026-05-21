@@ -583,7 +583,6 @@ async function exportFilingToPdf(project, handle, filing) {
 
   let pageNum = 1;
   let y = MARGIN_T;
-  const totalPagesPlaceholder = "{TOTAL}";
 
   const drawHeader = () => {
     doc.setFont("helvetica", "bold");
@@ -621,7 +620,6 @@ async function exportFilingToPdf(project, handle, filing) {
 
   drawHeader();
 
-  // Cover block
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.setTextColor(RED);
@@ -641,7 +639,6 @@ async function exportFilingToPdf(project, handle, filing) {
   doc.text(subtitle, MARGIN_L, y);
   y += 32;
 
-  // Body
   for (const line of lines) {
     const trimmed = line.trim();
 
@@ -676,7 +673,6 @@ async function exportFilingToPdf(project, handle, filing) {
     }
   }
 
-  // Figures section with embedded images
   const refs = Array.isArray(filing.referencedImages) ? filing.referencedImages : [];
   if (refs.length > 0) {
     newPage();
@@ -698,7 +694,6 @@ async function exportFilingToPdf(project, handle, filing) {
       const figLabel = `FIG. ${i + 1}`;
       const caption = ref.caption || ref.filename || "Attached image";
 
-      // Estimate image render box; preserve aspect ratio
       const maxW = CONTENT_W;
       const maxH = 320;
       let drawW = maxW;
@@ -723,14 +718,12 @@ async function exportFilingToPdf(project, handle, filing) {
 
       ensureSpace(drawH + 60);
 
-      // Figure label
       doc.setFont("helvetica", "bold");
       doc.setFontSize(11);
       doc.setTextColor(BLACK);
       doc.text(figLabel, MARGIN_L, y);
       y += 16;
 
-      // Image
       try {
         const fmt = dataUrl.startsWith("data:image/jpeg") || dataUrl.startsWith("data:image/jpg") ? "JPEG" : "PNG";
         doc.addImage(dataUrl, fmt, MARGIN_L, y, drawW, drawH);
@@ -744,7 +737,6 @@ async function exportFilingToPdf(project, handle, filing) {
         y += 16;
       }
 
-      // Caption
       doc.setFont("helvetica", "italic");
       doc.setFontSize(9);
       doc.setTextColor(GRAY);
@@ -1482,7 +1474,11 @@ function DraftingSection({ project, data, setData, handle, userId }) {
       } catch {}
     };
     window.addEventListener("beforeunload", flush);
-    return () => window.removeEventListener("beforeunload", flush);
+    return () => {
+      window.removeEventListener("beforeunload", flush);
+      // Flush on unmount (e.g., when navigating to another section)
+      flush();
+    };
   }, [messages, captures, currentPhase, filings, selectedFilingId]);
 
   const messagesForDisplay = messages.map(m => {
@@ -2409,7 +2405,11 @@ export default function PatentForgePage() {
   }, [section, data]);
 
   const handleSetData = (newData) => setData(newData);
-  const goNext = () => setSection(s => Math.min(s + 1, SECTIONS.length - 1));
+  const goNext = () => setSection(s => {
+    const next = Math.min(s + 1, SECTIONS.length - 1);
+    setData(d => ({ ...d, maxSection: Math.max(d?.maxSection || 0, next) }));
+    return next;
+  });
   const goToSection = (t) => {
     const filings = Array.isArray(data.filings) ? data.filings : [];
     const canVisitFilings = filings.length > 0;
@@ -2417,7 +2417,10 @@ export default function PatentForgePage() {
       alert("Generate your first Filing Draft from the Drafting section, then this section becomes available.");
       return;
     }
-    if (t < section || (t === 4 && canVisitFilings)) setSection(t);
+    // Allow navigation to any section the user has reached before (section was max-advanced)
+    // or to Filing Drafts if filings exist.
+    const maxReached = Math.max(section, data.maxSection || 0);
+    if (t <= maxReached || (t === 4 && canVisitFilings)) setSection(t);
   };
   const handleNew = (proj) => { setProject(proj); setSection(proj.section || 0); setData(proj.data || {}); setView("session"); };
   const handleResume = (proj) => { setProject(proj); setSection(proj.section || 0); setData(proj.data || {}); setView("session"); };
@@ -2458,11 +2461,13 @@ export default function PatentForgePage() {
       </div>
       <div style={styles.sections}>
         {SECTIONS.map((s, i) => {
+          const maxReached = Math.max(section, data.maxSection || 0);
           const isActive = i === section;
           const isCompleted = i < section;
+          const wasReached = i <= maxReached;
           const isFilings = i === 4;
           const filingsLocked = isFilings && !filingsAvailable;
-          const clickable = isCompleted || (isFilings && filingsAvailable);
+          const clickable = (wasReached && i !== section) || (isFilings && filingsAvailable);
           return (
             <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
               <div
