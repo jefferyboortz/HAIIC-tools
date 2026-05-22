@@ -4,13 +4,66 @@ import Head from "next/head";
 import Link from "next/link";
 import supabase from "../lib/supabaseClient";
 import theme from "./theme";
-import ReportProblemModal from "./ReportProblemModal";
+
+const BUG_REPORT_EMAIL = "BugReports@thehumanaiinnovationcommons.com";
+
+function detectAppName(pathname) {
+  if (!pathname) return "HAIIC";
+  if (pathname.startsWith("/brainstorm")) return "Brainstorm";
+  if (pathname.startsWith("/patent-forge")) return "Patent Forge";
+  if (pathname.startsWith("/per-se")) return "Per Se";
+  if (pathname.startsWith("/figura")) return "Figura";
+  if (pathname.startsWith("/profile")) return "Profile";
+  if (pathname.startsWith("/login")) return "Login";
+  return "HAIIC";
+}
+
+function buildMailtoLink({ pathname, handle, browser, timestamp }) {
+  const appName = detectAppName(pathname);
+  const subject = `[${appName} Bug Report] — ${pathname || "/"}`;
+  const body = `What were you trying to do?
+
+
+What went wrong?
+
+
+──────────────────
+Technical context (please leave below):
+Page: ${pathname || "(unknown)"}
+Reporter: ${handle || "(not signed in)"}
+Time: ${timestamp}
+Browser: ${browser}
+──────────────────
+
+Tip: attach a screenshot if it helps explain what happened.
+`;
+  return `mailto:${BUG_REPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+function detectBrowser() {
+  if (typeof navigator === "undefined") return "unknown";
+  const ua = navigator.userAgent || "";
+  let browser = "Unknown browser";
+  let os = "Unknown OS";
+
+  if (ua.includes("Edg/")) browser = "Edge";
+  else if (ua.includes("Chrome/") && !ua.includes("Chromium")) browser = "Chrome";
+  else if (ua.includes("Safari/") && !ua.includes("Chrome")) browser = "Safari";
+  else if (ua.includes("Firefox/")) browser = "Firefox";
+
+  if (ua.includes("Mac OS X")) os = "macOS";
+  else if (ua.includes("Windows NT")) os = "Windows";
+  else if (ua.includes("Android")) os = "Android";
+  else if (ua.includes("iPhone") || ua.includes("iPad")) os = "iOS";
+  else if (ua.includes("Linux")) os = "Linux";
+
+  return `${browser} on ${os}`;
+}
 
 export default function Layout({ children, title, logoSrc }) {
   const router = useRouter();
   const [authState, setAuthState] = useState("loading");
   const [displayName, setDisplayName] = useState(null);
-  const [reportOpen, setReportOpen] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -45,6 +98,24 @@ export default function Layout({ children, title, logoSrc }) {
     };
   }, []);
 
+  const handleReportClick = () => {
+    const mailto = buildMailtoLink({
+      pathname: router.asPath || "/",
+      handle: displayName || "(not signed in)",
+      browser: detectBrowser(),
+      timestamp: new Date().toLocaleString("en-US", {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZoneName: "short",
+      }),
+    });
+    window.location.href = mailto;
+  };
+
   return (
     <>
       <Head>
@@ -74,9 +145,9 @@ export default function Layout({ children, title, logoSrc }) {
             <span style={styles.navDivider}>|</span>
             {authState === "signedIn" && (
               <button
-                onClick={() => setReportOpen(true)}
+                onClick={handleReportClick}
                 style={styles.reportBtn}
-                title="Report a problem or share feedback"
+                title="Open your email client to report a problem"
               >
                 Report a Problem
               </button>
@@ -104,7 +175,6 @@ export default function Layout({ children, title, logoSrc }) {
           </p>
         </footer>
       </div>
-      <ReportProblemModal open={reportOpen} onClose={() => setReportOpen(false)} />
     </>
   );
 }
